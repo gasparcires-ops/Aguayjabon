@@ -21,6 +21,14 @@ export default function PuntoDeVenta() {
   const [categories, setCategories] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [sales, setSales] = useState([]);
+  const [accountUsers, setAccountUsers] = useState([]);
+  const [account, setAccount] = useState(() => {
+    try { return localStorage.getItem("agua_y_jabon_account") || null; } catch (e) { return null; }
+  });
+  const [loginUser, setLoginUser] = useState("");
+  const [loginPass, setLoginPass] = useState("");
+  const [accountLoginError, setAccountLoginError] = useState("");
+  const [accountForm, setAccountForm] = useState(null);
 
   const [activeEmployeeId, setActiveEmployeeId] = useState(null);
   const [loginPickId, setLoginPickId] = useState(null);
@@ -58,6 +66,12 @@ export default function PuntoDeVenta() {
       setCategories(await load("categories", []));
       setEmployees(await load("employees", []));
       setSales(await load("sales", []));
+      let users = await load("app_users", []);
+      if (!users || users.length === 0) {
+        users = [{ id: uid(), username: "aguayjabon", password: "gaspar" }];
+        try { await setData("app_users", users); } catch (e) {}
+      }
+      setAccountUsers(users);
       setLoaded(true);
     })();
   }, []);
@@ -75,6 +89,38 @@ export default function PuntoDeVenta() {
   const saveCategories = (n) => { setCategories(n); persist("categories", n); };
   const saveEmployees = (n) => { setEmployees(n); persist("employees", n); };
   const saveSales = (n) => { setSales(n); persist("sales", n); };
+  const saveAccountUsers = (n) => { setAccountUsers(n); persist("app_users", n); };
+
+  const doLogin = () => {
+    const match = accountUsers.find((u) => u.username === loginUser.trim() && u.password === loginPass);
+    if (match) {
+      setAccount(match.username);
+      try { localStorage.setItem("agua_y_jabon_account", match.username); } catch (e) {}
+      setLoginUser(""); setLoginPass(""); setAccountLoginError("");
+    } else {
+      setAccountLoginError("Usuario o contraseña incorrectos");
+    }
+  };
+  const doLogout = () => {
+    setAccount(null);
+    try { localStorage.removeItem("agua_y_jabon_account"); } catch (e) {}
+  };
+  const saveAccountUser = () => {
+    const username = accountForm.username.trim();
+    const password = accountForm.password;
+    if (!username || !password) return;
+    if (accountForm.id) {
+      saveAccountUsers(accountUsers.map((u) => (u.id === accountForm.id ? { ...u, username, password } : u)));
+    } else {
+      if (accountUsers.some((u) => u.username === username)) return;
+      saveAccountUsers([...accountUsers, { id: uid(), username, password }]);
+    }
+    setAccountForm(null);
+  };
+  const deleteAccountUser = (id) => {
+    if (accountUsers.length <= 1) return;
+    saveAccountUsers(accountUsers.filter((u) => u.id !== id));
+  };
 
   const activeEmployee = employees.find((e) => e.id === activeEmployeeId) || null;
   const needsLogin = employees.length > 0 && !activeEmployeeId;
@@ -284,6 +330,16 @@ export default function PuntoDeVenta() {
     return <div style={{ padding: 40, textAlign: "center", color: "#5C7A78", fontFamily: sans }}>Cargando...</div>;
   }
 
+  if (!account) {
+    return (
+      <AccountLoginScreen
+        loginUser={loginUser} setLoginUser={setLoginUser}
+        loginPass={loginPass} setLoginPass={setLoginPass}
+        onLogin={doLogin} error={accountLoginError}
+      />
+    );
+  }
+
   if (needsLogin) {
     return (
       <LoginScreen
@@ -314,7 +370,7 @@ export default function PuntoDeVenta() {
       <div style={{ background: "#0F6E66", padding: "18px 16px 0", color: "#fff" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 760, margin: "0 auto" }}>
           <div>
-            <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>Mi comercio</div>
+            <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>Agua y Jabón</div>
             <div style={{ fontSize: 12.5, color: "#BFE3DD", marginTop: 2 }}>
               {activeEmployee ? `Atiende: ${activeEmployee.name}` : "Stock, ventas y comprobantes"}
             </div>
@@ -328,6 +384,9 @@ export default function PuntoDeVenta() {
                 <LogOut size={13} /> Cambiar
               </button>
             )}
+            <button onClick={doLogout} title="Cerrar sesión" style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8, padding: "7px 10px", color: "#fff", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5 }}>
+              <Lock size={13} /> Salir
+            </button>
           </div>
         </div>
         <div style={{ display: "flex", gap: 2, maxWidth: 760, margin: "16px auto 0", overflowX: "auto" }}>
@@ -337,6 +396,7 @@ export default function PuntoDeVenta() {
             { id: "resumen", label: "Resumen", icon: BarChart3 },
             { id: "historial", label: "Historial", icon: Receipt },
             { id: "equipo", label: "Equipo", icon: Users },
+            { id: "accesos", label: "Accesos", icon: Lock },
           ].map((t) => {
             const Icon = t.icon;
             const active = tab === t.id;
@@ -380,11 +440,20 @@ export default function PuntoDeVenta() {
         {tab === "equipo" && (
           <EquipoTab employees={employees} openNew={() => setEmployeeForm({ name: "", pin: "" })} openEdit={(e) => setEmployeeForm(e)} onDelete={deleteEmployee} />
         )}
+        {tab === "accesos" && (
+          <AccesosTab
+            accountUsers={accountUsers} currentUser={account}
+            openNew={() => setAccountForm({ username: "", password: "" })}
+            openEdit={(u) => setAccountForm(u)}
+            onDelete={deleteAccountUser}
+          />
+        )}
       </div>
 
       {productForm && <ProductFormModal form={productForm} setForm={setProductForm} categories={categories} onSave={saveProduct} onClose={() => setProductForm(null)} />}
       {categoryForm && <CategoryFormModal form={categoryForm} setForm={setCategoryForm} onSave={saveCategory} onClose={() => setCategoryForm(null)} />}
       {employeeForm && <EmployeeFormModal form={employeeForm} setForm={setEmployeeForm} onSave={saveEmployee} onClose={() => setEmployeeForm(null)} />}
+      {accountForm && <AccountFormModal form={accountForm} setForm={setAccountForm} onSave={saveAccountUser} onClose={() => setAccountForm(null)} />}
       {modifierPicker && (
         <ModifierPickerModal
           product={modifierPicker}
@@ -394,6 +463,33 @@ export default function PuntoDeVenta() {
       )}
       {receipt && <ReceiptModal sale={receipt} methodLabel={methodLabel} onClose={() => setReceipt(null)} />}
       {viewingSale && <ReceiptModal sale={viewingSale} methodLabel={methodLabel} onClose={() => setViewingSale(null)} />}
+    </div>
+  );
+}
+
+// ---------------- Login de cuenta (acceso a toda la app) ----------------
+
+function AccountLoginScreen({ loginUser, setLoginUser, loginPass, setLoginPass, onLogin, error }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "#0F6E66", fontFamily: sans, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 360 }}>
+        <div style={{ textAlign: "center", color: "#fff", marginBottom: 22 }}>
+          <div style={{ fontSize: 21, fontWeight: 700 }}>Agua y Jabón</div>
+          <div style={{ fontSize: 13, color: "#BFE3DD", marginTop: 4 }}>Iniciá sesión para continuar</div>
+        </div>
+        <div style={{ background: "#fff", borderRadius: 16, padding: 20 }}>
+          <Field label="Usuario">
+            <input autoFocus value={loginUser} onChange={(e) => setLoginUser(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onLogin()} style={inputStyle} />
+          </Field>
+          <Field label="Contraseña">
+            <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onLogin()} style={inputStyle} />
+          </Field>
+          {error && <div style={{ color: "#D14343", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+          <button onClick={onLogin} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#0F6E66", color: "#fff", fontWeight: 700, marginTop: 4 }}>
+            Ingresar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -852,6 +948,56 @@ function EquipoTab({ employees, openNew, openEdit, onDelete }) {
   );
 }
 
+// ---------------- Accesos (usuarios que pueden entrar a la app) ----------------
+
+function AccesosTab({ accountUsers, currentUser, openNew, openEdit, onDelete }) {
+  return (
+    <div>
+      <div style={{ fontSize: 12.5, color: "#8FA6A4", marginBottom: 12 }}>
+        Estos son los usuarios que pueden entrar a esta app (distinto de los empleados que atienden en Vender).
+      </div>
+      <button onClick={openNew} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #0F6E66", background: "#fff", color: "#0F6E66", fontWeight: 700, fontSize: 14, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <Plus size={16} /> Agregar usuario
+      </button>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {accountUsers.map((u) => (
+          <div key={u.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+            <Lock size={15} style={{ color: "#0F6E66" }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{u.username}{u.username === currentUser ? " (vos)" : ""}</div>
+            </div>
+            <IconBtn onClick={() => openEdit(u)}><Pencil size={13} /></IconBtn>
+            <IconBtn
+              danger
+              onClick={() => {
+                if (accountUsers.length <= 1) { alert("Tiene que quedar al menos un usuario."); return; }
+                if (confirm(`¿Eliminar el usuario "${u.username}"?`)) onDelete(u.id);
+              }}
+            >
+              <Trash2 size={13} />
+            </IconBtn>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AccountFormModal({ form, setForm, onSave, onClose }) {
+  const isEdit = !!form.id;
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{isEdit ? "Editar usuario" : "Nuevo usuario"}</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+      </div>
+      <Field label="Usuario"><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} style={inputStyle} /></Field>
+      <Field label="Contraseña"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} style={inputStyle} /></Field>
+      <button onClick={onSave} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#0F6E66", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>Guardar</button>
+    </Overlay>
+  );
+}
+
 // ---------------- Modales ----------------
 
 function ProductFormModal({ form, setForm, categories, onSave, onClose }) {
@@ -982,7 +1128,7 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
       </div>
       <div className="receipt-print" style={{ background: "#fff", borderRadius: 4, padding: "22px 20px", fontFamily: mono, border: "1px solid #E3ECEA" }}>
         <div style={{ textAlign: "center", marginBottom: 4 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>MI COMERCIO</div>
+          <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>AGUA Y JABÓN</div>
           <div style={{ fontSize: 10.5, color: "#8FA6A4", marginTop: 2 }}>Comprobante interno · no válido como factura fiscal</div>
         </div>
         <Dashed />
