@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   ShoppingCart, Package, Receipt, Plus, Minus, Trash2, X, Search,
   Wallet, CreditCard, ArrowLeftRight, AlertTriangle, Printer, Pencil,
   Users, BarChart3, Tag, Percent, LogOut, Lock, ChevronRight, Sliders,
-  Download, ScanBarcode,
+  Download, ScanBarcode, Upload, FileSpreadsheet, Banknote, MessageSquare,
+  TrendingUp,
 } from "lucide-react";
 import { getData, setData } from "./lib/storage";
+import * as XLSX from "xlsx";
 
 const LOW_STOCK = 5;
 const sans = "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
@@ -52,6 +54,11 @@ export default function PuntoDeVenta() {
   const [saveError, setSaveError] = useState("");
   const [range, setRange] = useState("hoy");
 
+  const [cajaActual, setCajaActual] = useState(null);
+  const [cajaHistorial, setCajaHistorial] = useState([]);
+  const [observaciones, setObservaciones] = useState([]);
+  const fileInputRef = useRef(null);
+
   useEffect(() => {
     (async () => {
       const load = async (key, fallback) => {
@@ -72,6 +79,9 @@ export default function PuntoDeVenta() {
         try { await setData("app_users", users); } catch (e) {}
       }
       setAccountUsers(users);
+      setCajaActual(await load("caja_actual", null));
+      setCajaHistorial(await load("caja_historial", []));
+      setObservaciones(await load("observaciones", []));
       setLoaded(true);
     })();
   }, []);
@@ -90,6 +100,45 @@ export default function PuntoDeVenta() {
   const saveEmployees = (n) => { setEmployees(n); persist("employees", n); };
   const saveSales = (n) => { setSales(n); persist("sales", n); };
   const saveAccountUsers = (n) => { setAccountUsers(n); persist("app_users", n); };
+  const saveObservaciones = (n) => { setObservaciones(n); persist("observaciones", n); };
+
+  const abrirCaja = (amount) => {
+    const nueva = { openingAmount: amount, openedAt: new Date().toISOString(), employeeName: activeEmployee ? activeEmployee.name : account };
+    setCajaActual(nueva);
+    persist("caja_actual", nueva);
+  };
+  const cerrarCaja = (counted) => {
+    if (!cajaActual) return;
+    const ventasEfectivo = sales
+      .filter((s) => s.method === "efectivo" && new Date(s.date) >= new Date(cajaActual.openedAt))
+      .reduce((a, s) => a + s.total, 0);
+    const esperado = cajaActual.openingAmount + ventasEfectivo;
+    const registro = { id: uid(), ...cajaActual, closedAt: new Date().toISOString(), ventasEfectivo, esperado, counted, diferencia: counted - esperado };
+    const nextHist = [registro, ...cajaHistorial];
+    setCajaHistorial(nextHist);
+    persist("caja_historial", nextHist);
+    setCajaActual(null);
+    persist("caja_actual", null);
+  };
+
+  const addObservacion = (text) => {
+    const clean = text.trim();
+    if (!clean) return;
+    const next = [{ id: uid(), text: clean, author: account, date: new Date().toISOString() }, ...observaciones];
+    saveObservaciones(next);
+  };
+  const deleteObservacion = (id) => saveObservaciones(observaciones.filter((o) => o.id !== id));
+
+  const deleteSale = (id) => {
+    const sale = sales.find((s) => s.id === id);
+    if (!sale) return;
+    const nextProducts = products.map((p) => {
+      const item = sale.items.find((i) => i.productId === p.id);
+      return item ? { ...p, stock: p.stock + item.qty } : p;
+    });
+    saveProducts(nextProducts);
+    saveSales(sales.filter((s) => s.id !== id));
+  };
 
   const doLogin = () => {
     const match = accountUsers.find((u) => u.username === loginUser.trim() && u.password === loginPass);
@@ -233,14 +282,15 @@ export default function PuntoDeVenta() {
   };
 
   // ---- productos ----
-  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "" });
-  const openEditProduct = (p) => setProductForm({ ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "" });
+  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "" });
+  const openEditProduct = (p) => setProductForm({ ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "", cost: p.cost ? String(p.cost) : "" });
   const saveProduct = () => {
     const name = productForm.name.trim();
     const price = parseFloat(productForm.price);
     const stock = parseInt(productForm.stock, 10);
     if (!name || isNaN(price) || price < 0 || isNaN(stock) || stock < 0) return;
-    const data = { name, price, stock, categoryId: productForm.categoryId || "", modifiers: productForm.modifiers || [], barcode: (productForm.barcode || "").trim() };
+    const cost = parseFloat(productForm.cost);
+    const data = { name, price, stock, categoryId: productForm.categoryId || "", modifiers: productForm.modifiers || [], barcode: (productForm.barcode || "").trim(), cost: isNaN(cost) ? 0 : cost };
     if (productForm.id) {
       saveProducts(products.map((p) => (p.id === productForm.id ? { ...p, ...data } : p)));
     } else {
@@ -249,6 +299,80 @@ export default function PuntoDeVenta() {
     setProductForm(null);
   };
   const deleteProduct = (id) => saveProducts(products.filter((p) => p.id !== id));
+
+  // ---- importar artículos desde Excel ----
+  const normKey = (s) => String(s).trim().toLowerCase();
+  const handleImportExcel = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+      let newCategories = [...categories];
+      const ensureCategory = (name) => {
+        const trimmed = String(name || "").trim();
+        if (!trimmed) return "";
+        const existing = newCategories.find((c) => normKey(c.name) === normKey(trimmed));
+        if (existing) return existing.id;
+        const cat = { id: uid(), name: trimmed };
+        newCategories = [...newCategories, cat];
+        return cat.id;
+      };
+
+      let updated = [...products];
+      let added = 0, editedCount = 0;
+      rows.forEach((row) => {
+        const get = (...keys) => {
+          for (const k of Object.keys(row)) {
+            if (keys.includes(normKey(k))) return row[k];
+          }
+          return "";
+        };
+        const name = String(get("nombre", "producto", "name")).trim();
+        if (!name) return;
+        const price = parseFloat(get("precio", "price", "precio de venta")) || 0;
+        const stock = parseInt(get("stock", "cantidad", "existencias"), 10) || 0;
+        const cost = parseFloat(get("precio de compra", "costo", "cost")) || 0;
+        const barcode = String(get("codigo de barras", "código de barras", "barcode", "codigo") || "").trim();
+        const catName = String(get("categoria", "categoría", "category") || "").trim();
+        const categoryId = ensureCategory(catName);
+
+        const existingIdx = updated.findIndex((p) =>
+          (barcode && p.barcode === barcode) || (!barcode && normKey(p.name) === normKey(name))
+        );
+        if (existingIdx >= 0) {
+          updated[existingIdx] = {
+            ...updated[existingIdx], name, price, stock, cost,
+            barcode: barcode || updated[existingIdx].barcode,
+            categoryId: categoryId || updated[existingIdx].categoryId,
+          };
+          editedCount++;
+        } else {
+          updated.push({ id: uid(), name, price, stock, cost, barcode, categoryId, modifiers: [] });
+          added++;
+        }
+      });
+      saveCategories(newCategories);
+      saveProducts(updated);
+      alert(`Importación completa: ${added} productos nuevos, ${editedCount} actualizados.`);
+    } catch (err) {
+      alert("No se pudo leer el archivo. Verificá que sea un Excel (.xlsx) válido.");
+    }
+    e.target.value = "";
+  };
+  const downloadPlantilla = () => {
+    const wsData = [
+      ["Nombre", "Precio", "Precio de compra", "Stock", "Categoría", "Código de barras"],
+      ["Detergente Magistral 500ml", 3500, 2200, 10, "Detergentes", ""],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Artículos");
+    XLSX.writeFile(wb, "plantilla-articulos.xlsx");
+  };
 
   const saveCategory = () => {
     const name = categoryForm.name.trim();
@@ -396,6 +520,8 @@ export default function PuntoDeVenta() {
             { id: "resumen", label: "Resumen", icon: BarChart3 },
             { id: "historial", label: "Historial", icon: Receipt },
             { id: "equipo", label: "Equipo", icon: Users },
+            { id: "caja", label: "Caja", icon: Banknote },
+            { id: "avisos", label: "Avisos", icon: MessageSquare },
             { id: "accesos", label: "Accesos", icon: Lock },
           ].map((t) => {
             const Icon = t.icon;
@@ -431,14 +557,21 @@ export default function PuntoDeVenta() {
             products={products} categories={categories}
             openNewProduct={openNewProduct} openEditProduct={openEditProduct} deleteProduct={deleteProduct}
             openNewCategory={() => setCategoryForm({ name: "" })} openEditCategory={(c) => setCategoryForm(c)} deleteCategory={deleteCategory}
+            fileInputRef={fileInputRef} onImportExcel={handleImportExcel} onDownloadPlantilla={downloadPlantilla}
           />
         )}
         {tab === "resumen" && (
-          <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} />
+          <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} />
         )}
-        {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} methodLabel={methodLabel} />}
+        {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} onDelete={deleteSale} methodLabel={methodLabel} />}
         {tab === "equipo" && (
           <EquipoTab employees={employees} openNew={() => setEmployeeForm({ name: "", pin: "" })} openEdit={(e) => setEmployeeForm(e)} onDelete={deleteEmployee} />
+        )}
+        {tab === "caja" && (
+          <CajaTab cajaActual={cajaActual} cajaHistorial={cajaHistorial} sales={sales} onAbrir={abrirCaja} onCerrar={cerrarCaja} />
+        )}
+        {tab === "avisos" && (
+          <AvisosTab observaciones={observaciones} currentUser={account} onAdd={addObservacion} onDelete={deleteObservacion} />
         )}
         {tab === "accesos" && (
           <AccesosTab
@@ -688,10 +821,11 @@ function IconBtn({ onClick, children, danger }) {
 
 // ---------------- Artículos ----------------
 
-function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory }) {
+function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla }) {
   const [section, setSection] = useState("productos");
   const lowStock = products.filter((p) => p.stock <= LOW_STOCK).length;
   const catName = (id) => categories.find((c) => c.id === id)?.name;
+  const margin = (p) => (p.cost && p.cost > 0 ? ((p.price - p.cost) / p.cost) * 100 : null);
 
   return (
     <div>
@@ -706,13 +840,23 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
             <MetricCard label="Productos" value={products.length} />
             <MetricCard label="Stock bajo" value={lowStock} warn={lowStock > 0} />
           </div>
-          <button onClick={openNewProduct} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #0F6E66", background: "#fff", color: "#0F6E66", fontWeight: 700, fontSize: 14, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={openNewProduct} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #0F6E66", background: "#fff", color: "#0F6E66", fontWeight: 700, fontSize: 14, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Plus size={16} /> Agregar producto
           </button>
-          {products.length === 0 && <EmptyState text="Todavía no cargaste productos. Agregá el primero." />}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <button onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B2A2E", fontWeight: 600, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Upload size={14} /> Importar Excel
+            </button>
+            <button onClick={onDownloadPlantilla} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontWeight: 600, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <FileSpreadsheet size={14} /> Plantilla
+            </button>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={onImportExcel} style={{ display: "none" }} />
+          </div>
+          {products.length === 0 && <EmptyState text="Todavía no cargaste productos. Agregá el primero o importá un Excel." />}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {products.map((p) => {
               const low = p.stock <= LOW_STOCK;
+              const m = margin(p);
               return (
                 <div key={p.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -721,6 +865,11 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
                       {catName(p.categoryId) ? catName(p.categoryId) + " · " : ""}${fmt(p.price)}
                       {p.modifiers && p.modifiers.length > 0 ? ` · ${p.modifiers.length} modificador${p.modifiers.length > 1 ? "es" : ""}` : ""}
                     </div>
+                    {m !== null && (
+                      <div style={{ fontSize: 11, color: "#0F6E66", display: "flex", alignItems: "center", gap: 3, marginTop: 2 }}>
+                        <TrendingUp size={11} /> Margen {m.toFixed(0)}% (costo ${fmt(p.cost)})
+                      </div>
+                    )}
                   </div>
                   <div style={{ fontSize: 12.5, fontWeight: 700, padding: "4px 9px", borderRadius: 20, background: low ? "#FDF0DC" : "#E3F3F0", color: low ? "#D97706" : "#0F6E66", display: "flex", alignItems: "center", gap: 4 }}>
                     {low && <AlertTriangle size={12} />} {p.stock}
@@ -782,10 +931,19 @@ function inRange(dateStr, range) {
   return true;
 }
 
-function ResumenTab({ sales, categories, employees, range, setRange }) {
+function ResumenTab({ sales, categories, employees, range, setRange, products }) {
   const filtered = sales.filter((s) => inRange(s.date, range));
   const total = filtered.reduce((a, s) => a + s.total, 0);
   const count = filtered.length;
+
+  const ganancia = filtered.reduce((acc, s) => {
+    return acc + s.items.reduce((a, i) => {
+      const prod = products.find((p) => p.id === i.productId);
+      const cost = prod && prod.cost ? prod.cost : 0;
+      return a + (i.price - cost) * i.qty;
+    }, 0);
+  }, 0);
+  const hayCostos = products.some((p) => p.cost > 0);
 
   const byMethod = {};
   filtered.forEach((s) => { byMethod[s.method] = (byMethod[s.method] || 0) + s.total; });
@@ -825,6 +983,11 @@ function ResumenTab({ sales, categories, employees, range, setRange }) {
         <MetricCard label="Ventas" value={count} />
         <MetricCard label="Total vendido" value={"$" + fmt(total)} />
       </div>
+      {hayCostos && (
+        <div style={{ marginBottom: 16 }}>
+          <MetricCard label="Ganancia estimada" value={"$" + fmt(ganancia)} />
+        </div>
+      )}
 
       {count === 0 ? (
         <EmptyState text="No hay ventas registradas en este período." />
@@ -894,7 +1057,7 @@ function BarRow({ label, value, max }) {
 
 // ---------------- Historial ----------------
 
-function HistorialTab({ sales, onView, methodLabel }) {
+function HistorialTab({ sales, onView, onDelete, methodLabel }) {
   const totalHoy = sales.filter((s) => new Date(s.date).toDateString() === new Date().toDateString()).reduce((a, s) => a + s.total, 0);
   return (
     <div>
@@ -905,15 +1068,25 @@ function HistorialTab({ sales, onView, methodLabel }) {
       {sales.length === 0 && <EmptyState text="Todavía no registraste ninguna venta." />}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {sales.map((s) => (
-          <button key={s.id} onClick={() => onView(s)} style={{ textAlign: "left", background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 13.5, fontWeight: 600 }}>Comprobante #{s.number}</div>
-              <div style={{ fontSize: 12, color: "#8FA6A4" }}>
-                {new Date(s.date).toLocaleString("es-AR")} · {methodLabel[s.method]}{s.employeeName ? ` · ${s.employeeName}` : ""}
+          <div key={s.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+            <button onClick={() => onView(s)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>Comprobante #{s.number}</div>
+                <div style={{ fontSize: 12, color: "#8FA6A4" }}>
+                  {new Date(s.date).toLocaleString("es-AR")} · {methodLabel[s.method]}{s.employeeName ? ` · ${s.employeeName}` : ""}
+                </div>
               </div>
-            </div>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#0F6E66" }}>${fmt(s.total)}</div>
-          </button>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#0F6E66", marginRight: 8 }}>${fmt(s.total)}</div>
+            </button>
+            <IconBtn
+              danger
+              onClick={() => {
+                if (confirm(`¿Eliminar el comprobante #${s.number}? Esto devuelve el stock vendido a los productos.`)) onDelete(s.id);
+              }}
+            >
+              <Trash2 size={13} />
+            </IconBtn>
+          </div>
         ))}
       </div>
     </div>
@@ -941,6 +1114,113 @@ function EquipoTab({ employees, openNew, openEdit, onDelete }) {
             </div>
             <IconBtn onClick={() => openEdit(e)}><Pencil size={13} /></IconBtn>
             <IconBtn danger onClick={() => { if (confirm(`¿Eliminar a "${e.name}"?`)) onDelete(e.id); }}><Trash2 size={13} /></IconBtn>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Caja ----------------
+
+function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar }) {
+  const [openAmount, setOpenAmount] = useState("");
+  const [countedAmount, setCountedAmount] = useState("");
+
+  const ventasEfectivoActual = cajaActual
+    ? sales.filter((s) => s.method === "efectivo" && new Date(s.date) >= new Date(cajaActual.openedAt)).reduce((a, s) => a + s.total, 0)
+    : 0;
+  const esperadoActual = cajaActual ? cajaActual.openingAmount + ventasEfectivoActual : 0;
+
+  return (
+    <div>
+      {!cajaActual ? (
+        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Abrir caja</div>
+          <Field label="Efectivo con el que arrancás el turno">
+            <input type="number" min="0" step="0.01" value={openAmount} onChange={(e) => setOpenAmount(e.target.value)} placeholder="0.00" style={inputStyle} />
+          </Field>
+          <button
+            onClick={() => { const amt = parseFloat(openAmount) || 0; onAbrir(amt); setOpenAmount(""); }}
+            style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#0F6E66", color: "#fff", fontWeight: 700, fontSize: 14 }}
+          >
+            Abrir caja
+          </button>
+        </div>
+      ) : (
+        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 12.5, color: "#0F6E66", fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+            <Banknote size={14} /> Caja abierta desde {new Date(cajaActual.openedAt).toLocaleString("es-AR")}
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+            <MetricCard label="Apertura" value={"$" + fmt(cajaActual.openingAmount)} />
+            <MetricCard label="Ventas efectivo" value={"$" + fmt(ventasEfectivoActual)} />
+          </div>
+          <div style={{ fontSize: 13, color: "#5C7A78", marginBottom: 10 }}>Efectivo esperado en caja: <b>${fmt(esperadoActual)}</b></div>
+          <Field label="Efectivo contado al cerrar">
+            <input type="number" min="0" step="0.01" value={countedAmount} onChange={(e) => setCountedAmount(e.target.value)} placeholder="0.00" style={inputStyle} />
+          </Field>
+          <button
+            onClick={() => {
+              const amt = parseFloat(countedAmount) || 0;
+              onCerrar(amt);
+              setCountedAmount("");
+            }}
+            style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#0F6E66", color: "#fff", fontWeight: 700, fontSize: 14 }}
+          >
+            Cerrar caja
+          </button>
+        </div>
+      )}
+
+      {cajaHistorial.length > 0 && (
+        <Section title="Historial de cajas">
+          {cajaHistorial.map((c) => (
+            <div key={c.id} style={{ padding: "8px 0", borderBottom: "1px solid #F0F4F3" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{new Date(c.openedAt).toLocaleDateString("es-AR")}{c.employeeName ? ` · ${c.employeeName}` : ""}</div>
+              <div style={{ fontSize: 12, color: "#8FA6A4" }}>
+                Apertura ${fmt(c.openingAmount)} · Esperado ${fmt(c.esperado)} · Contado ${fmt(c.counted)}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: c.diferencia === 0 ? "#0F6E66" : c.diferencia > 0 ? "#0F6E66" : "#D14343" }}>
+                Diferencia: {c.diferencia >= 0 ? "+" : ""}${fmt(c.diferencia)}
+              </div>
+            </div>
+          ))}
+        </Section>
+      )}
+    </div>
+  );
+}
+
+// ---------------- Avisos ----------------
+
+function AvisosTab({ observaciones, currentUser, onAdd, onDelete }) {
+  const [text, setText] = useState("");
+  return (
+    <div>
+      <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <textarea
+          value={text} onChange={(e) => setText(e.target.value)}
+          placeholder="Ej: esta semana el detergente 500ml tiene 15% de descuento..."
+          style={{ ...inputStyle, minHeight: 70, resize: "vertical", marginBottom: 10 }}
+        />
+        <button
+          onClick={() => { onAdd(text); setText(""); }}
+          style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: "#0F6E66", color: "#fff", fontWeight: 700, fontSize: 13.5 }}
+        >
+          Publicar aviso
+        </button>
+      </div>
+
+      {observaciones.length === 0 && <EmptyState text="Todavía no hay avisos publicados." />}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {observaciones.map((o) => (
+          <div key={o.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "12px 14px" }}>
+            <div style={{ fontSize: 13.5, marginBottom: 8, whiteSpace: "pre-wrap" }}>{o.text}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 11.5, color: "#8FA6A4" }}>{o.author} · {new Date(o.date).toLocaleString("es-AR")}</div>
+              <IconBtn danger onClick={() => { if (confirm("¿Eliminar este aviso?")) onDelete(o.id); }}><Trash2 size={13} /></IconBtn>
+            </div>
           </div>
         ))}
       </div>
@@ -1035,9 +1315,10 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose }) {
         </select>
       </Field>
       <div style={{ display: "flex", gap: 10 }}>
-        <Field label="Precio" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
-        <Field label="Stock" style={{ flex: 1 }}><input type="number" min="0" step="1" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" style={inputStyle} /></Field>
+        <Field label="Precio de venta" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
+        <Field label="Precio de compra (costo, opcional)" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.cost || ""} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
       </div>
+      <Field label="Stock"><input type="number" min="0" step="1" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" style={inputStyle} /></Field>
 
       <Field label="Modificadores (opcionales — ej: tamaño, sabor)">
         {(form.modifiers || []).map((m, idx) => (
