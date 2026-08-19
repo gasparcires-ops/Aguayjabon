@@ -4,10 +4,11 @@ import {
   Wallet, CreditCard, ArrowLeftRight, AlertTriangle, Printer, Pencil,
   Users, BarChart3, Tag, Percent, LogOut, Lock, ChevronRight, Sliders,
   Download, ScanBarcode, Upload, FileSpreadsheet, Banknote, MessageSquare,
-  TrendingUp,
+  TrendingUp, Wand2,
 } from "lucide-react";
 import { getData, setData } from "./lib/storage";
 import * as XLSX from "xlsx";
+import JsBarcode from "jsbarcode";
 
 const LOW_STOCK = 5;
 const sans = "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
@@ -57,6 +58,7 @@ export default function PuntoDeVenta() {
   const [cajaActual, setCajaActual] = useState(null);
   const [cajaHistorial, setCajaHistorial] = useState([]);
   const [observaciones, setObservaciones] = useState([]);
+  const [labelProduct, setLabelProduct] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -119,6 +121,49 @@ export default function PuntoDeVenta() {
     persist("caja_historial", nextHist);
     setCajaActual(null);
     persist("caja_actual", null);
+  };
+
+  const exportarCajaExcel = () => {
+    const rows = [
+      ["Fecha apertura", "Empleado", "Apertura $", "Ventas efectivo", "Esperado $", "Contado $", "Diferencia $", "Fecha cierre", "Estado"],
+    ];
+    cajaHistorial.forEach((c) => {
+      rows.push([
+        new Date(c.openedAt).toLocaleString("es-AR"),
+        c.employeeName || "",
+        c.openingAmount,
+        c.ventasEfectivo,
+        c.esperado,
+        c.counted,
+        c.diferencia,
+        new Date(c.closedAt).toLocaleString("es-AR"),
+        "Cerrada",
+      ]);
+    });
+    if (cajaActual) {
+      const ventasEfectivoActual = sales
+        .filter((s) => s.method === "efectivo" && new Date(s.date) >= new Date(cajaActual.openedAt))
+        .reduce((a, s) => a + s.total, 0);
+      rows.push([
+        new Date(cajaActual.openedAt).toLocaleString("es-AR"),
+        cajaActual.employeeName || "",
+        cajaActual.openingAmount,
+        ventasEfectivoActual,
+        cajaActual.openingAmount + ventasEfectivoActual,
+        "", "", "",
+        "Abierta (en curso)",
+      ]);
+    }
+    if (rows.length === 1) {
+      alert("Todavía no hay movimientos de caja para exportar.");
+      return;
+    }
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 20 }, { wch: 16 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 20 }, { wch: 16 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Movimientos de caja");
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `movimientos-caja-${stamp}.xlsx`);
   };
 
   const addObservacion = (text) => {
@@ -282,6 +327,14 @@ export default function PuntoDeVenta() {
   };
 
   // ---- productos ----
+  const genBarcode = (existingProducts) => {
+    const nums = existingProducts
+      .map((p) => p.barcode)
+      .filter((b) => /^20\d{9,}$/.test(b))
+      .map((b) => parseInt(b, 10));
+    const next = (nums.length ? Math.max(...nums) : 200000000000) + 1;
+    return String(next);
+  };
   const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "" });
   const openEditProduct = (p) => setProductForm({ ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "", cost: p.cost ? String(p.cost) : "" });
   const saveProduct = () => {
@@ -290,7 +343,9 @@ export default function PuntoDeVenta() {
     const stock = parseInt(productForm.stock, 10);
     if (!name || isNaN(price) || price < 0 || isNaN(stock) || stock < 0) return;
     const cost = parseFloat(productForm.cost);
-    const data = { name, price, stock, categoryId: productForm.categoryId || "", modifiers: productForm.modifiers || [], barcode: (productForm.barcode || "").trim(), cost: isNaN(cost) ? 0 : cost };
+    let barcode = (productForm.barcode || "").trim();
+    if (!barcode) barcode = genBarcode(products);
+    const data = { name, price, stock, categoryId: productForm.categoryId || "", modifiers: productForm.modifiers || [], barcode, cost: isNaN(cost) ? 0 : cost };
     if (productForm.id) {
       saveProducts(products.map((p) => (p.id === productForm.id ? { ...p, ...data } : p)));
     } else {
@@ -299,6 +354,24 @@ export default function PuntoDeVenta() {
     setProductForm(null);
   };
   const deleteProduct = (id) => saveProducts(products.filter((p) => p.id !== id));
+
+  const generarCodigosFaltantes = () => {
+    let working = [...products];
+    let count = 0;
+    working = working.map((p) => {
+      if (!p.barcode || !p.barcode.trim()) {
+        count++;
+        return { ...p, barcode: genBarcode(working) };
+      }
+      return p;
+    });
+    if (count === 0) {
+      alert("Todos los productos ya tienen código de barras.");
+      return;
+    }
+    saveProducts(working);
+    alert(`Se generaron ${count} código(s) de barras nuevos.`);
+  };
 
   // ---- importar artículos desde Excel ----
   const normKey = (s) => String(s).trim().toLowerCase();
@@ -487,12 +560,15 @@ export default function PuntoDeVenta() {
           body * { visibility: hidden; }
           .receipt-print, .receipt-print * { visibility: visible; }
           .receipt-print { position: fixed; top: 0; left: 0; width: 100%; max-width: 320px; margin: 0 auto; border: none !important; }
+          .label-print, .label-print * { visibility: visible; }
+          .label-print { position: fixed; top: 0; left: 0; width: 100%; }
           .no-print { display: none !important; }
+          @page { size: 80mm auto; margin: 2mm; }
         }
       `}</style>
 
       <div style={{ background: "#fff", padding: "14px 16px 0", color: "#1B2A2E", borderBottom: "1px solid #E3ECEA" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 760, margin: "0 auto" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 1180, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <img src="/logo.jpg" alt="Agua y Jabón" style={{ height: 46, width: 46, objectFit: "contain", borderRadius: 8 }} />
             <div>
@@ -516,7 +592,7 @@ export default function PuntoDeVenta() {
             </button>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 2, maxWidth: 760, margin: "14px auto 0", overflowX: "auto" }}>
+        <div style={{ display: "flex", gap: 2, maxWidth: 1180, margin: "14px auto 0", overflowX: "auto" }}>
           {[
             { id: "vender", label: "Vender", icon: ShoppingCart },
             { id: "articulos", label: "Artículos", icon: Package },
@@ -542,7 +618,7 @@ export default function PuntoDeVenta() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 760, margin: "0 auto", padding: 16 }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: 16 }}>
         {saveError && <div style={{ background: "#FDECEC", color: "#B3261E", padding: "8px 12px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{saveError}</div>}
 
         {tab === "vender" && (
@@ -561,6 +637,8 @@ export default function PuntoDeVenta() {
             openNewProduct={openNewProduct} openEditProduct={openEditProduct} deleteProduct={deleteProduct}
             openNewCategory={() => setCategoryForm({ name: "" })} openEditCategory={(c) => setCategoryForm(c)} deleteCategory={deleteCategory}
             fileInputRef={fileInputRef} onImportExcel={handleImportExcel} onDownloadPlantilla={downloadPlantilla}
+            onPrintLabel={(p) => setLabelProduct(p)}
+            onGenerarCodigos={generarCodigosFaltantes}
           />
         )}
         {tab === "resumen" && (
@@ -571,7 +649,7 @@ export default function PuntoDeVenta() {
           <EquipoTab employees={employees} openNew={() => setEmployeeForm({ name: "", pin: "" })} openEdit={(e) => setEmployeeForm(e)} onDelete={deleteEmployee} />
         )}
         {tab === "caja" && (
-          <CajaTab cajaActual={cajaActual} cajaHistorial={cajaHistorial} sales={sales} onAbrir={abrirCaja} onCerrar={cerrarCaja} />
+          <CajaTab cajaActual={cajaActual} cajaHistorial={cajaHistorial} sales={sales} onAbrir={abrirCaja} onCerrar={cerrarCaja} onExport={exportarCajaExcel} />
         )}
         {tab === "avisos" && (
           <AvisosTab observaciones={observaciones} currentUser={account} onAdd={addObservacion} onDelete={deleteObservacion} />
@@ -599,6 +677,7 @@ export default function PuntoDeVenta() {
       )}
       {receipt && <ReceiptModal sale={receipt} methodLabel={methodLabel} onClose={() => setReceipt(null)} />}
       {viewingSale && <ReceiptModal sale={viewingSale} methodLabel={methodLabel} onClose={() => setViewingSale(null)} />}
+      {labelProduct && <LabelModal product={labelProduct} onClose={() => setLabelProduct(null)} />}
     </div>
   );
 }
@@ -830,7 +909,7 @@ function IconBtn({ onClick, children, danger }) {
 
 // ---------------- Artículos ----------------
 
-function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla }) {
+function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos }) {
   const [section, setSection] = useState("productos");
   const lowStock = products.filter((p) => p.stock <= LOW_STOCK).length;
   const catName = (id) => categories.find((c) => c.id === id)?.name;
@@ -861,6 +940,9 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
             </button>
             <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={onImportExcel} style={{ display: "none" }} />
           </div>
+          <button onClick={onGenerarCodigos} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontWeight: 600, fontSize: 12, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Wand2 size={13} /> Generar códigos de barras faltantes
+          </button>
           {products.length === 0 && <EmptyState text="Todavía no cargaste productos. Agregá el primero o importá un Excel." />}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {products.map((p) => {
@@ -883,6 +965,7 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
                   <div style={{ fontSize: 12.5, fontWeight: 700, padding: "4px 9px", borderRadius: 20, background: low ? "#FDF0DC" : "#E4ECFB", color: low ? "#D97706" : "#1B4F9C", display: "flex", alignItems: "center", gap: 4 }}>
                     {low && <AlertTriangle size={12} />} {p.stock}
                   </div>
+                  <IconBtn onClick={() => onPrintLabel(p)}><Tag size={13} /></IconBtn>
                   <IconBtn onClick={() => openEditProduct(p)}><Pencil size={13} /></IconBtn>
                   <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${p.name}"?`)) deleteProduct(p.id); }}><Trash2 size={13} /></IconBtn>
                 </div>
@@ -1132,7 +1215,7 @@ function EquipoTab({ employees, openNew, openEdit, onDelete }) {
 
 // ---------------- Caja ----------------
 
-function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar }) {
+function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar, onExport }) {
   const [openAmount, setOpenAmount] = useState("");
   const [countedAmount, setCountedAmount] = useState("");
 
@@ -1143,6 +1226,13 @@ function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar }) {
 
   return (
     <div>
+      <button
+        onClick={onExport}
+        style={{ width: "100%", padding: 11, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B4F9C", fontWeight: 600, fontSize: 12.5, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+      >
+        <FileSpreadsheet size={14} /> Exportar movimientos a Excel
+      </button>
+
       {!cajaActual ? (
         <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 16, marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Abrir caja</div>
@@ -1469,6 +1559,65 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
 }
 
 function Dashed() { return <div style={{ borderTop: "1.5px dashed #DCE7E5", margin: "4px 0" }} />; }
+
+// ---------------- Etiquetas (impresora térmica 80mm) ----------------
+
+function BarcodeSVG({ value, height = 40 }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (ref.current && value) {
+      try {
+        JsBarcode(ref.current, value, {
+          format: "CODE128", width: 1.6, height, displayValue: false, margin: 0,
+        });
+      } catch (e) {}
+    }
+  }, [value, height]);
+  return <svg ref={ref} />;
+}
+
+function LabelModal({ product, onClose }) {
+  const [copies, setCopies] = useState(1);
+  const n = Math.max(1, Math.min(50, parseInt(copies, 10) || 1));
+
+  return (
+    <Overlay onClose={onClose}>
+      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>Etiqueta · {product.name}</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+      </div>
+
+      <div className="no-print" style={{ marginBottom: 14 }}>
+        <Field label="Cantidad de etiquetas a imprimir">
+          <input type="number" min="1" max="50" value={copies} onChange={(e) => setCopies(e.target.value)} style={inputStyle} />
+        </Field>
+      </div>
+
+      <div className="label-print" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {Array.from({ length: n }).map((_, i) => (
+          <div key={i} style={{
+            width: "76mm", padding: "3mm", border: "1px dashed #DCE7E5", borderRadius: 4,
+            textAlign: "center", background: "#fff", fontFamily: sans,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{product.name}</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#1B4F9C", marginBottom: 3 }}>${fmt(product.price)}</div>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <BarcodeSVG value={product.barcode} />
+            </div>
+            <div style={{ fontSize: 9, letterSpacing: 1, color: "#5C7A78", marginTop: 1 }}>{product.barcode}</div>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={() => window.print()} className="no-print" style={{ width: "100%", marginTop: 14, padding: 12, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B2A2E", fontWeight: 600, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <Printer size={15} /> Imprimir {n > 1 ? `(${n} etiquetas)` : ""}
+      </button>
+      <button onClick={onClose} className="no-print" style={{ width: "100%", marginTop: 8, padding: 12, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14 }}>
+        Listo
+      </button>
+    </Overlay>
+  );
+}
 
 function Field({ label, children, style }) {
   return (
