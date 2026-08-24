@@ -767,123 +767,152 @@ function VenderTab({
   discount, setDiscount, showDiscount, setShowDiscount, cobrar, onScan, scanMsg,
 }) {
   return (
-    <div>
-      <div style={{ position: "relative", marginBottom: 6 }}>
-        <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: "#8FA6A4" }} />
-        <input
-          autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onScan(search); } }}
-          placeholder="Buscar o escanear código de barras..." style={{ ...inputStyle, padding: "10px 34px 10px 34px" }}
-        />
-        <ScanBarcode size={16} style={{ position: "absolute", right: 12, top: 12, color: "#8FA6A4" }} />
-      </div>
-      {scanMsg && <div style={{ fontSize: 12, color: "#D97706", marginBottom: 8 }}>{scanMsg}</div>}
-
-      {categories.length > 0 && (
-        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
-          <Chip active={catFilter === "all"} onClick={() => setCatFilter("all")}>Todas</Chip>
-          {categories.map((c) => (
-            <Chip key={c.id} active={catFilter === c.id} onClick={() => setCatFilter(c.id)}>{c.name}</Chip>
-          ))}
-        </div>
-      )}
-
-      {products.length === 0 && <EmptyState text="No hay productos que coincidan. Cargá productos desde Artículos." />}
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, marginBottom: 20 }}>
-        {products.map((p) => {
-          const outOfStock = p.stock <= 0;
-          return (
-            <button key={p.id} onClick={() => onProductTap(p)} disabled={outOfStock} style={{
-              textAlign: "left", background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 12, opacity: outOfStock ? 0.45 : 1, position: "relative",
-            }}>
-              {p.modifiers && p.modifiers.length > 0 && <Sliders size={12} style={{ position: "absolute", top: 10, right: 10, color: "#8FA6A4" }} />}
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, lineHeight: 1.25 }}>{p.name}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#1B4F9C" }}>${fmt(p.price)}</div>
-              <div style={{ fontSize: 11.5, color: outOfStock ? "#D97706" : "#8FA6A4", marginTop: 4 }}>{outOfStock ? "Sin stock" : `${p.stock} en stock`}</div>
-            </button>
-          );
-        })}
-      </div>
-
-      {cart.length > 0 && (
-        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 14, padding: 14, position: "sticky", bottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: "#5C7A78" }}>CARRITO</div>
-          {cart.map((l) => {
-            const extras = (l.modifiers || []).reduce((a, m) => a + m.price, 0);
-            return (
-              <div key={l.lineId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0F4F3" }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</div>
-                  {l.modifiers && l.modifiers.length > 0 && (
-                    <div style={{ fontSize: 11, color: "#8FA6A4" }}>{l.modifiers.map((m) => m.name).join(", ")}</div>
-                  )}
-                  <div style={{ fontSize: 12, color: "#8FA6A4" }}>${fmt(l.price + extras)} c/u</div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <IconBtn onClick={() => changeQty(l.lineId, -1)}><Minus size={13} /></IconBtn>
-                  <span style={{ fontSize: 13.5, minWidth: 18, textAlign: "center", fontWeight: 600 }}>{l.qty}</span>
-                  <IconBtn onClick={() => changeQty(l.lineId, 1)}><Plus size={13} /></IconBtn>
-                  <IconBtn onClick={() => removeLine(l.lineId)} danger><Trash2 size={13} /></IconBtn>
-                </div>
-              </div>
-            );
-          })}
-
-          <button onClick={() => setShowDiscount((v) => !v)} style={{
-            display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#1B4F9C",
-            fontSize: 12.5, fontWeight: 600, padding: "10px 0 2px",
-          }}>
-            <Percent size={13} /> {discount.value > 0 ? "Editar descuento" : "Agregar descuento"}
-          </button>
-          {showDiscount && (
-            <div style={{ display: "flex", gap: 6, margin: "6px 0 4px" }}>
-              <select value={discount.type} onChange={(e) => setDiscount({ ...discount, type: e.target.value })} style={{ ...inputStyle, width: 90 }}>
-                <option value="pct">%</option>
-                <option value="fixed">$</option>
-              </select>
-              <input type="number" min="0" step={discount.type === "pct" ? "1" : "0.01"} value={discount.value || ""} onChange={(e) => setDiscount({ ...discount, value: parseFloat(e.target.value) || 0 })} placeholder="0" style={inputStyle} />
-            </div>
-          )}
-
-          <div style={{ margin: "10px 0" }}>
-            {cartTotals.discountAmount > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#8FA6A4", marginBottom: 3 }}>
-                <span>Subtotal</span><span>${fmt(cartTotals.subtotal)}</span>
-              </div>
-            )}
-            {cartTotals.discountAmount > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#D97706", marginBottom: 3 }}>
-                <span>Descuento</span><span>-${fmt(cartTotals.discountAmount)}</span>
-              </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span style={{ fontSize: 13.5, color: "#5C7A78" }}>Total</span>
-              <span style={{ fontSize: 22, fontWeight: 700 }}>${fmt(cartTotals.total)}</span>
-            </div>
+    <div className="pos-layout">
+      <section className="pos-products">
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, marginBottom:12 }}>
+          <div>
+            <div style={{ fontSize:20, fontWeight:800, letterSpacing:-0.4 }}>Nueva venta</div>
+            <div style={{ fontSize:12.5, color:"#6B7280", marginTop:3 }}>Buscá un producto o escaneá su código</div>
           </div>
+          <div style={{ display:"flex", alignItems:"center", gap:6, color:"#1B4F9C", fontSize:12, fontWeight:700 }}>
+            <ScanBarcode size={18}/> Lector listo
+          </div>
+        </div>
 
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            {Object.keys(methodLabel).map((m) => {
-              const Icon = methodIcon[m];
-              const active = payMethod === m;
+        <div style={{ position:"relative", marginBottom:10 }}>
+          <Search size={19} style={{ position:"absolute", left:14, top:16, color:"#1B4F9C" }}/>
+          <input
+            autoFocus value={search}
+            onChange={(e)=>setSearch(e.target.value)}
+            onKeyDown={(e)=>{ if(e.key==="Enter"){e.preventDefault();onScan(search);} }}
+            placeholder="Buscar por nombre o código de barras…"
+            className="pos-search"
+            style={{ padding:"0 44px", border:"2px solid #DCE7F5", boxSizing:"border-box" }}
+          />
+          <ScanBarcode size={19} style={{ position:"absolute", right:14, top:16, color:"#6B7280" }}/>
+        </div>
+
+        {scanMsg && (
+          <div style={{ background:"#FFF7E8", color:"#A15C00", border:"1px solid #F5D69B", padding:"8px 10px", borderRadius:9, fontSize:12.5, marginBottom:10 }}>
+            {scanMsg}
+          </div>
+        )}
+
+        {categories.length > 0 && (
+          <div style={{ display:"flex", gap:7, overflowX:"auto", marginBottom:14, padding:"2px 0 5px" }}>
+            <Chip active={catFilter==="all"} onClick={()=>setCatFilter("all")}>Todas</Chip>
+            {categories.map(c=><Chip key={c.id} active={catFilter===c.id} onClick={()=>setCatFilter(c.id)}>{c.name}</Chip>)}
+          </div>
+        )}
+
+        {products.length === 0 ? (
+          <EmptyState text="No hay productos que coincidan. Probá otro nombre, código o categoría." />
+        ) : (
+          <div className="pos-product-grid">
+            {products.map(p=>{
+              const outOfStock=p.stock<=0;
               return (
-                <button key={m} onClick={() => setPayMethod(m)} style={{
-                  flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 6px",
-                  borderRadius: 9, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5",
-                  background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5C7A78", fontWeight: active ? 700 : 500,
-                }}>
-                  <Icon size={13} /> {methodLabel[m]}
+                <button key={p.id} onClick={()=>onProductTap(p)} disabled={outOfStock}
+                  className="pos-product-card"
+                  style={{ textAlign:"left", opacity:outOfStock?.5:1, position:"relative", cursor:outOfStock?"not-allowed":"pointer" }}>
+                  {p.modifiers?.length>0 && <Sliders size={13} style={{position:"absolute",top:11,right:11,color:"#6B7280"}}/>}
+                  <div style={{fontSize:14,fontWeight:700,lineHeight:1.3,paddingRight:18}}>{p.name}</div>
+                  <span className="pos-product-price">${fmt(p.price)}</span>
+                  <span className="pos-stock">{outOfStock?"Sin stock":`${p.stock} disponibles`}</span>
                 </button>
               );
             })}
           </div>
+        )}
+      </section>
 
-          <button onClick={cobrar} style={{ width: "100%", padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontSize: 15, fontWeight: 700 }}>
-            Cobrar ${fmt(cartTotals.total)}
-          </button>
+      <aside className="pos-cart">
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800}}>Carrito</div>
+            <div style={{fontSize:12,color:"#6B7280",marginTop:2}}>{cart.reduce((a,l)=>a+l.qty,0)} artículo(s)</div>
+          </div>
+          <ShoppingCart size={20} color="#1B4F9C"/>
         </div>
-      )}
+
+        {cart.length===0 ? (
+          <div className="ayj-empty">
+            <ShoppingCart size={28} style={{marginBottom:8,opacity:.45}}/>
+            <div style={{fontWeight:700,color:"#4B5563"}}>El carrito está vacío</div>
+            <div style={{fontSize:12,marginTop:4}}>Seleccioná productos para comenzar la venta.</div>
+          </div>
+        ) : (
+          <>
+            <div style={{maxHeight:330,overflowY:"auto",marginBottom:8}}>
+              {cart.map(l=>{
+                const extras=(l.modifiers||[]).reduce((a,m)=>a+m.price,0);
+                return (
+                  <div key={l.lineId} style={{padding:"10px 0",borderBottom:"1px solid #EEF1F5"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
+                      <div style={{minWidth:0,flex:1}}>
+                        <div style={{fontSize:13.5,fontWeight:700,lineHeight:1.25}}>{l.name}</div>
+                        {l.modifiers?.length>0 && <div style={{fontSize:11,color:"#6B7280",marginTop:2}}>{l.modifiers.map(m=>m.name).join(", ")}</div>}
+                        <div style={{fontSize:12,color:"#6B7280",marginTop:3}}>${fmt(l.price+extras)} c/u</div>
+                      </div>
+                      <button onClick={()=>removeLine(l.lineId)} title="Eliminar" style={{border:0,background:"transparent",color:"#9CA3AF",padding:2,height:28}}>
+                        <Trash2 size={15}/>
+                      </button>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:7}}>
+                      <div style={{display:"flex",alignItems:"center",gap:7}}>
+                        <IconBtn onClick={()=>changeQty(l.lineId,-1)}><Minus size={13}/></IconBtn>
+                        <span style={{minWidth:22,textAlign:"center",fontWeight:800}}>{l.qty}</span>
+                        <IconBtn onClick={()=>changeQty(l.lineId,1)}><Plus size={13}/></IconBtn>
+                      </div>
+                      <strong style={{fontSize:13.5}}>${fmt((l.price+extras)*l.qty)}</strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button onClick={()=>setShowDiscount(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:0,color:"#1B4F9C",fontSize:12.5,fontWeight:700,padding:"8px 0"}}>
+              <Percent size={14}/> {discount.value>0?"Editar descuento":"Agregar descuento"}
+            </button>
+
+            {showDiscount && (
+              <div style={{display:"flex",gap:6,marginBottom:8}}>
+                <select value={discount.type} onChange={e=>setDiscount({...discount,type:e.target.value})} style={{...inputStyle,width:82}}>
+                  <option value="pct">%</option><option value="fixed">$</option>
+                </select>
+                <input type="number" min="0" step={discount.type==="pct"?"1":"0.01"} value={discount.value||""}
+                  onChange={e=>setDiscount({...discount,value:parseFloat(e.target.value)||0})} placeholder="Descuento" style={inputStyle}/>
+              </div>
+            )}
+
+            <div style={{borderTop:"1px solid #E8EDF3",paddingTop:10,marginTop:2}}>
+              {cartTotals.discountAmount>0 && <>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:"#6B7280",marginBottom:4}}><span>Subtotal</span><span>${fmt(cartTotals.subtotal)}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:"#B86A00",marginBottom:6}}><span>Descuento</span><span>-${fmt(cartTotals.discountAmount)}</span></div>
+              </>}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                <span style={{fontSize:13,fontWeight:700,color:"#4B5563"}}>TOTAL</span>
+                <span className="pos-total">${fmt(cartTotals.total)}</span>
+              </div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:7,margin:"12px 0"}}>
+              {Object.keys(methodLabel).map(m=>{
+                const Icon=methodIcon[m], active=payMethod===m;
+                return <button key={m} onClick={()=>setPayMethod(m)} style={{
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:5,minHeight:42,borderRadius:9,
+                  border:active?"2px solid #1B4F9C":"1px solid #DCE4EF",background:active?"#EAF2FF":"#fff",
+                  color:active?"#1B4F9C":"#5C6470",fontSize:12,fontWeight:active?800:600
+                }}><Icon size={14}/>{methodLabel[m]}</button>;
+              })}
+            </div>
+
+            <button onClick={cobrar} className="ayj-primary-btn" style={{width:"100%",fontSize:16,minHeight:52}}>
+              Cobrar ${fmt(cartTotals.total)}
+            </button>
+          </>
+        )}
+      </aside>
     </div>
   );
 }
