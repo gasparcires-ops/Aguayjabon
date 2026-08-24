@@ -10,9 +10,10 @@ import {
 import { getData, setData } from "./lib/storage";
 import * as XLSX from "xlsx";
 import JsBarcode from "jsbarcode";
+import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
 
 const LOW_STOCK = 5;
-const sans = "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+const sans = "Nunito, system-ui, -apple-system, sans-serif";
 const mono = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace";
 
 const fmt = (n) =>
@@ -552,7 +553,7 @@ export default function PuntoDeVenta() {
   const methodIcon = { efectivo: Wallet, transferencia: ArrowLeftRight, debito: CreditCard, credito: CreditCard, mercadopago: Smartphone, otros: MoreHorizontal };
 
   if (!loaded) {
-    return <div style={{ padding: 40, textAlign: "center", color: "#5C7A78", fontFamily: sans }}>Cargando...</div>;
+    return <div style={{ padding: 40, textAlign: "center", color: "#5B7791", fontFamily: sans }}>Cargando...</div>;
   }
 
   if (!account) {
@@ -581,7 +582,7 @@ export default function PuntoDeVenta() {
   }
 
   return (
-    <div style={{ minHeight: "100%", background: "#F6F9F8", fontFamily: sans, color: "#1B2A2E" }}>
+    <div style={{ minHeight: "100%", background: "#F2F6FB", fontFamily: sans, color: "#10243D" }}>
       <style>{`
         * { box-sizing: border-box; } button { font-family: inherit; cursor: pointer; } input, select { font-family: inherit; }
         button:active { transform: scale(0.98); }
@@ -605,32 +606,36 @@ export default function PuntoDeVenta() {
         }
       `}</style>
 
-      <div style={{ background: "#fff", padding: "14px 16px 0", color: "#1B2A2E", borderBottom: "1px solid #E3ECEA" }}>
+      <div style={{ background: "#fff", padding: "18px 16px 0", color: "#10243D", borderBottom: "1px solid #E1EAF4" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 1180, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <img src="/logo.jpg" alt="Agua y Jabón" style={{ height: 46, width: 46, objectFit: "contain", borderRadius: 8 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <img src="/logo.jpg" alt="Agua y Jabón" style={{ width: 76, height: 76, objectFit: "contain", borderRadius: 14 }} />
             <div>
-              <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: -0.3, color: "#1B4F9C" }}>Agua y Jabón</div>
-              <div style={{ fontSize: 12, color: "#5C7A78", marginTop: 1 }}>
-                {activeEmployee ? `Atiende: ${activeEmployee.name}` : "Stock, ventas y comprobantes"}
-              </div>
+              <div style={{ fontSize: 27, fontWeight: 900, letterSpacing: -0.3, color: C.azulOscuro }}>Agua y Jabón</div>
+              {activeEmployee ? (
+                <div style={{ display: "inline-block", background: C.azulSuave, color: C.azul, borderRadius: 999, padding: "5px 12px", fontSize: 14.5, fontWeight: 700, marginTop: 4 }}>
+                  Atiende: {activeEmployee.name}
+                </div>
+              ) : (
+                <div style={{ fontSize: 14, color: C.textoSuave, marginTop: 3 }}>Stock, ventas y comprobantes</div>
+              )}
             </div>
           </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={exportBackup} title="Exportar copia de seguridad" style={{ background: "#F0F4FE", border: "none", borderRadius: 8, padding: "7px 10px", color: "#1B4F9C", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600 }}>
-              <Download size={13} /> Exportar
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={exportBackup} title="Exportar copia de seguridad" style={btn("secundario", "sm")}>
+              <Download size={15} /> Exportar
             </button>
             {employees.length > 0 && (
-              <button onClick={() => setActiveEmployeeId(null)} style={{ background: "#F0F4FE", border: "none", borderRadius: 8, padding: "7px 10px", color: "#1B4F9C", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600 }}>
-                <LogOut size={13} /> Cambiar
+              <button onClick={() => setActiveEmployeeId(null)} style={btn("terciario", "sm")}>
+                <LogOut size={15} /> Cambiar
               </button>
             )}
-            <button onClick={doLogout} title="Cerrar sesión" style={{ background: "#F0F4FE", border: "none", borderRadius: 8, padding: "7px 10px", color: "#1B4F9C", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600 }}>
-              <Lock size={13} /> Salir
+            <button onClick={doLogout} title="Cerrar sesión" style={{ ...btn("terciario", "sm"), color: C.rojo }}>
+              <Lock size={15} /> Salir
             </button>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 2, maxWidth: 1180, margin: "14px auto 0", overflowX: "auto" }}>
+        <div style={{ display: "flex", gap: 2, maxWidth: 1180, margin: "16px auto 0", overflowX: "auto" }}>
           {[
             { id: "vender", label: "Vender", icon: ShoppingCart },
             { id: "articulos", label: "Artículos", icon: Package },
@@ -645,11 +650,11 @@ export default function PuntoDeVenta() {
             const active = tab === t.id;
             return (
               <button key={t.id} onClick={() => setTab(t.id)} style={{
-                flex: "1 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                padding: "10px 8px", border: "none", borderBottom: active ? "2.5px solid #1B4F9C" : "2.5px solid transparent",
-                background: "transparent", color: active ? "#1B4F9C" : "#8FA6A4", fontWeight: active ? 700 : 500, fontSize: 12.5, whiteSpace: "nowrap",
+                flex: "1 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                padding: "16px 18px", border: "none", borderBottom: active ? `4px solid ${C.azul}` : "4px solid transparent",
+                background: "transparent", color: active ? C.azul : C.textoTenue, fontWeight: active ? 800 : 600, fontSize: 16.5, whiteSpace: "nowrap",
               }}>
-                <Icon size={15} /> {t.label}
+                <Icon size={17} /> {t.label}
               </button>
             );
           })}
@@ -757,8 +762,8 @@ function AccountLoginScreen({ loginUser, setLoginUser, loginPass, setLoginPass, 
           <Field label="Contraseña">
             <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onLogin()} style={inputStyle} />
           </Field>
-          {error && <div style={{ color: "#E4262B", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
-          <button onClick={onLogin} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, marginTop: 4 }}>
+          {error && <div style={{ color: "#B0242A", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+          <button onClick={onLogin} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 4 }}>
             Ingresar
           </button>
         </div>
@@ -791,7 +796,7 @@ function LoginScreen({ employees, onPick, pickId, pinInput, setPinInput, onConfi
                   {e.name.slice(0, 1).toUpperCase()}
                 </div>
                 <div style={{ fontSize: 13.5, fontWeight: 600, textAlign: "center" }}>{e.name}</div>
-                {e.pin && <Lock size={11} style={{ color: "#8FA6A4" }} />}
+                {e.pin && <Lock size={11} style={{ color: "#8AA2BC" }} />}
               </button>
             ))}
           </div>
@@ -804,9 +809,9 @@ function LoginScreen({ employees, onPick, pickId, pinInput, setPinInput, onConfi
               onKeyDown={(e) => e.key === "Enter" && onConfirmPin()}
               style={{ ...inputStyle, textAlign: "center", fontSize: 22, letterSpacing: 8, marginBottom: 10 }}
             />
-            {error && <div style={{ color: "#E4262B", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
-            <button onClick={onConfirmPin} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, marginBottom: 8 }}>Ingresar</button>
-            <button onClick={onCancelPin} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontWeight: 600 }}>Volver</button>
+            {error && <div style={{ color: "#B0242A", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+            <button onClick={onConfirmPin} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 8 }}>Ingresar</button>
+            <button onClick={onCancelPin} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #DBE6F2", background: "#fff", color: "#5B7791", fontWeight: 600 }}>Volver</button>
           </div>
         )}
       </div>
@@ -831,16 +836,16 @@ function VenderTab({
     <div className="vender-layout">
       <div className="vender-products">
         <div style={{ position: "relative", marginBottom: 8 }}>
-          <Search size={20} style={{ position: "absolute", left: 16, top: 16, color: "#8FA6A4" }} />
+          <Search size={20} style={{ position: "absolute", left: 16, top: 16, color: "#8AA2BC" }} />
           <input
             autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onScan(search); } }}
             placeholder="Buscar por nombre o escanear código de barras..."
-            style={{ ...inputStyle, padding: "16px 44px", fontSize: 16, borderRadius: 14, border: "1.5px solid #DCE7E5", boxShadow: "0 1px 3px rgba(16,40,80,0.04)" }}
+            style={{ ...inputStyle, padding: "16px 44px", fontSize: 16, borderRadius: 14, border: "1.5px solid #DBE6F2", boxShadow: "0 1px 3px rgba(16,40,80,0.04)" }}
           />
-          <ScanBarcode size={20} style={{ position: "absolute", right: 16, top: 16, color: "#8FA6A4" }} />
+          <ScanBarcode size={20} style={{ position: "absolute", right: 16, top: 16, color: "#8AA2BC" }} />
         </div>
-        {scanMsg && <div style={{ fontSize: 12, color: "#D97706", marginBottom: 8 }}>{scanMsg}</div>}
+        {scanMsg && <div style={{ fontSize: 12, color: "#A85C06", marginBottom: 8 }}>{scanMsg}</div>}
 
         {categories.length > 0 && (
           <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
@@ -861,35 +866,29 @@ function VenderTab({
             const line = hasMods ? null : lineForProduct(p.id);
             return (
               <div key={p.id} style={{
-                background: "#fff", border: qty > 0 ? "1.5px solid #1B4F9C" : "1px solid #E3ECEA", borderRadius: 14, padding: 14,
+                background: "#fff", border: qty > 0 ? "1.5px solid #1B4F9C" : "1px solid #E1EAF4", borderRadius: 14, padding: 14,
                 opacity: outOfStock ? 0.45 : 1, position: "relative", display: "flex", flexDirection: "column", gap: 8,
                 boxShadow: qty > 0 ? "0 2px 10px rgba(27,79,156,0.10)" : "none",
               }}>
-                {hasMods && <Sliders size={13} style={{ position: "absolute", top: 12, right: 12, color: "#8FA6A4" }} />}
+                {hasMods && <Sliders size={13} style={{ position: "absolute", top: 12, right: 12, color: "#8AA2BC" }} />}
                 <button
                   onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock}
                   style={{ textAlign: "left", background: "none", border: "none", padding: 0, cursor: outOfStock ? "default" : "pointer" }}
                 >
-                  <div style={{ fontSize: 14.5, fontWeight: 700, marginBottom: 5, lineHeight: 1.25, color: "#1B2A2E" }}>{p.name}</div>
+                  <div style={{ fontSize: 14.5, fontWeight: 700, marginBottom: 5, lineHeight: 1.25, color: "#10243D" }}>{p.name}</div>
                   <div style={{ fontSize: 21, fontWeight: 800, color: "#1B4F9C", marginBottom: 5 }}>${fmt(p.price)}</div>
                 </button>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{
-                    fontSize: 11.5, fontWeight: 700, padding: "3px 8px", borderRadius: 20,
-                    background: outOfStock ? "#FDECEC" : p.stock <= LOW_STOCK ? "#FDF0DC" : "#F0F4F3",
-                    color: outOfStock ? "#E4262B" : p.stock <= LOW_STOCK ? "#D97706" : "#8FA6A4",
-                  }}>
-                    {outOfStock ? "Sin stock" : `${p.stock} en stock`}
-                  </span>
+                  <span style={badgeStock(p.stock, LOW_STOCK).estilo}>{badgeStock(p.stock, LOW_STOCK).texto}</span>
                   {!hasMods && (
                     qty > 0 ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <button onClick={() => changeQty(line.lineId, -1)} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={15} /></button>
+                        <button onClick={() => changeQty(line.lineId, -1)} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #DBE6F2", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={15} /></button>
                         <span style={{ fontSize: 15, fontWeight: 800, minWidth: 22, textAlign: "center" }}>{qty}</span>
                         <button onClick={() => onProductTap(p)} disabled={outOfStock} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "#1B4F9C", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
                       </div>
                     ) : (
-                      <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: outOfStock ? "#DCE7E5" : "#1B4F9C", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
+                      <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: outOfStock ? "#DBE6F2" : "#1B4F9C", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
                     )
                   )}
                 </div>
@@ -900,10 +899,10 @@ function VenderTab({
       </div>
 
       <div className="vender-cart">
-        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 16, padding: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "#5C7A78", letterSpacing: 0.3 }}>CARRITO</div>
+        <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 16, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "#5B7791", letterSpacing: 0.3 }}>CARRITO</div>
           {cart.length === 0 && (
-            <div style={{ textAlign: "center", padding: "22px 8px", color: "#8FA6A4", fontSize: 13 }}>
+            <div style={{ textAlign: "center", padding: "22px 8px", color: "#8AA2BC", fontSize: 13 }}>
               <ShoppingCart size={26} style={{ marginBottom: 8, opacity: 0.5 }} />
               <div>Todavía no agregaste productos</div>
             </div>
@@ -911,13 +910,13 @@ function VenderTab({
           {cart.map((l) => {
             const extras = (l.modifiers || []).reduce((a, m) => a + m.price, 0);
             return (
-              <div key={l.lineId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F4F3" }}>
+              <div key={l.lineId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #EDF2F8" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</div>
                   {l.modifiers && l.modifiers.length > 0 && (
-                    <div style={{ fontSize: 11, color: "#8FA6A4" }}>{l.modifiers.map((m) => m.name).join(", ")}</div>
+                    <div style={{ fontSize: 11, color: "#8AA2BC" }}>{l.modifiers.map((m) => m.name).join(", ")}</div>
                   )}
-                  <div style={{ fontSize: 12, color: "#8FA6A4" }}>${fmt(l.price + extras)} c/u</div>
+                  <div style={{ fontSize: 12, color: "#8AA2BC" }}>${fmt(l.price + extras)} c/u</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <IconBtn onClick={() => changeQty(l.lineId, -1)}><Minus size={13} /></IconBtn>
@@ -949,17 +948,17 @@ function VenderTab({
 
               <div style={{ margin: "12px 0", padding: "12px", background: "#F6F9FE", borderRadius: 12 }}>
                 {cartTotals.discountAmount > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#8FA6A4", marginBottom: 3 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#8AA2BC", marginBottom: 3 }}>
                     <span>Subtotal</span><span>${fmt(cartTotals.subtotal)}</span>
                   </div>
                 )}
                 {cartTotals.discountAmount > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#D97706", marginBottom: 3 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#A85C06", marginBottom: 3 }}>
                     <span>Descuento</span><span>-${fmt(cartTotals.discountAmount)}</span>
                   </div>
                 )}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <span style={{ fontSize: 14, color: "#5C7A78", fontWeight: 600 }}>TOTAL</span>
+                  <span style={{ fontSize: 14, color: "#5B7791", fontWeight: 600 }}>TOTAL</span>
                   <span style={{ fontSize: 28, fontWeight: 800, color: "#1B4F9C" }}>${fmt(cartTotals.total)}</span>
                 </div>
               </div>
@@ -971,8 +970,8 @@ function VenderTab({
                   return (
                     <button key={m} onClick={() => setPayMethod(m)} style={{
                       display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "10px 6px",
-                      borderRadius: 10, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5",
-                      background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5C7A78", fontWeight: active ? 700 : 500,
+                      borderRadius: 10, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2",
+                      background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5B7791", fontWeight: active ? 700 : 500,
                     }}>
                       <Icon size={13} /> {methodLabel[m]}
                     </button>
@@ -980,7 +979,7 @@ function VenderTab({
                 })}
               </div>
 
-              <button onClick={cobrar} style={{ width: "100%", padding: 15, borderRadius: 12, border: "none", background: "#1B4F9C", color: "#fff", fontSize: 16, fontWeight: 800 }}>
+              <button onClick={cobrar} style={{ ...btn("primario", "lg"), width: "100%" }}>
                 Cobrar ${fmt(cartTotals.total)}
               </button>
             </>
@@ -992,22 +991,11 @@ function VenderTab({
 }
 
 function Chip({ active, onClick, children }) {
-  return (
-    <button onClick={onClick} style={{
-      flexShrink: 0, padding: "6px 13px", borderRadius: 20, fontSize: 12.5, whiteSpace: "nowrap",
-      border: active ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5", background: active ? "#E4ECFB" : "#fff",
-      color: active ? "#1B4F9C" : "#5C7A78", fontWeight: active ? 700 : 500,
-    }}>{children}</button>
-  );
+  return <button onClick={onClick} style={{ ...chipStyle(active), flexShrink: 0, whiteSpace: "nowrap" }}>{children}</button>;
 }
 
 function IconBtn({ onClick, children, danger }) {
-  return (
-    <button onClick={onClick} style={{
-      width: 26, height: 26, borderRadius: 7, border: "1px solid #DCE7E5", display: "flex", alignItems: "center",
-      justifyContent: "center", background: "#fff", color: danger ? "#E4262B" : "#1B2A2E",
-    }}>{children}</button>
-  );
+  return <button onClick={onClick} style={iconBtn(danger ? "peligro" : "secundario")}>{children}</button>;
 }
 
 // ---------------- Artículos ----------------
@@ -1034,8 +1022,8 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button onClick={() => setSection("productos")} style={{ flex: 1, padding: "8px", borderRadius: 9, border: section === "productos" ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5", background: section === "productos" ? "#E4ECFB" : "#fff", color: section === "productos" ? "#1B4F9C" : "#5C7A78", fontWeight: 700, fontSize: 13 }}>Productos</button>
-        <button onClick={() => setSection("categorias")} style={{ flex: 1, padding: "8px", borderRadius: 9, border: section === "categorias" ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5", background: section === "categorias" ? "#E4ECFB" : "#fff", color: section === "categorias" ? "#1B4F9C" : "#5C7A78", fontWeight: 700, fontSize: 13 }}>Categorías</button>
+        <button onClick={() => setSection("productos")} style={{ flex: 1, padding: "8px", borderRadius: 9, border: section === "productos" ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2", background: section === "productos" ? "#E4ECFB" : "#fff", color: section === "productos" ? "#1B4F9C" : "#5B7791", fontWeight: 700, fontSize: 13 }}>Productos</button>
+        <button onClick={() => setSection("categorias")} style={{ flex: 1, padding: "8px", borderRadius: 9, border: section === "categorias" ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2", background: section === "categorias" ? "#E4ECFB" : "#fff", color: section === "categorias" ? "#1B4F9C" : "#5B7791", fontWeight: 700, fontSize: 13 }}>Categorías</button>
       </div>
 
       {section === "productos" ? (
@@ -1049,41 +1037,41 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
               onClick={() => setOnlyPending((v) => !v)}
               style={{
                 width: "100%", padding: "10px 12px", borderRadius: 10, marginBottom: 14, display: "flex", alignItems: "center", gap: 8,
-                border: onlyPending ? "1.5px solid #D97706" : "1px solid #FBE3B8", background: onlyPending ? "#FDF0DC" : "#FFFBF2",
+                border: onlyPending ? "1.5px solid #A85C06" : "1px solid #FBE3B8", background: onlyPending ? "#FDF0DC" : "#FFFBF2",
               }}
             >
-              <CircleAlert size={16} style={{ color: "#D97706", flexShrink: 0 }} />
+              <CircleAlert size={16} style={{ color: "#A85C06", flexShrink: 0 }} />
               <span style={{ fontSize: 12.5, color: "#92600B", fontWeight: 600, textAlign: "left", flex: 1 }}>
                 {pendingCount} producto{pendingCount !== 1 ? "s" : ""} sin precio o costo cargado
               </span>
-              <span style={{ fontSize: 11.5, color: "#D97706", fontWeight: 700 }}>{onlyPending ? "Ver todos" : "Ver"}</span>
+              <span style={{ fontSize: 11.5, color: "#A85C06", fontWeight: 700 }}>{onlyPending ? "Ver todos" : "Ver"}</span>
             </button>
           )}
-          <button onClick={openNewProduct} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #1B4F9C", background: "#fff", color: "#1B4F9C", fontWeight: 700, fontSize: 14, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <Plus size={16} /> Agregar producto
+          <button onClick={openNewProduct} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 8 }}>
+            <Plus size={18} /> Agregar producto
           </button>
           <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-            <button onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B2A2E", fontWeight: 600, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <Upload size={14} /> Importar Excel
+            <button onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ ...btn("secundario"), flex: 1 }}>
+              <Upload size={15} /> Importar Excel
             </button>
-            <button onClick={onDownloadPlantilla} style={{ flex: 1, padding: 11, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontWeight: 600, fontSize: 12.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <FileSpreadsheet size={14} /> Plantilla
+            <button onClick={onDownloadPlantilla} style={{ ...btn("secundario"), flex: 1 }}>
+              <FileSpreadsheet size={15} /> Plantilla
             </button>
             <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={onImportExcel} style={{ display: "none" }} />
           </div>
-          <button onClick={onGenerarCodigos} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontWeight: 600, fontSize: 12, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <Wand2 size={13} /> Generar códigos de barras faltantes
+          <button onClick={onGenerarCodigos} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 14 }}>
+            <Wand2 size={14} /> Generar códigos de barras faltantes
           </button>
 
           <div style={{ position: "relative", marginBottom: 14 }}>
-            <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: "#8FA6A4" }} />
+            <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: "#8AA2BC" }} />
             <input
               value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por nombre, categoría o código de barras..."
               style={{ ...inputStyle, padding: "10px 12px 10px 34px" }}
             />
             {search && (
-              <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: 7, border: "none", background: "none", color: "#8FA6A4", padding: 4 }}>
+              <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: 7, border: "none", background: "none", color: "#8AA2BC", padding: 4 }}>
                 <X size={16} />
               </button>
             )}
@@ -1097,7 +1085,7 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
 
           {products.length === 0 && <EmptyState text="Todavía no cargaste productos. Agregá el primero o importá un Excel." />}
           {products.length > 0 && filteredProducts.length === 0 && <EmptyState text="No hay productos que coincidan." />}
-          <div style={{ fontSize: 11.5, color: "#8FA6A4", marginBottom: 6 }}>
+          <div style={{ fontSize: 11.5, color: "#8AA2BC", marginBottom: 6 }}>
             {filteredProducts.length} producto{filteredProducts.length !== 1 ? "s" : ""} · orden alfabético
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1106,11 +1094,11 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
               const m = margin(p);
               const pending = isPending(p);
               return (
-                <div key={p.id} style={{ background: "#fff", border: pending ? "1px solid #FBE3B8" : "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px" }}>
+                <div key={p.id} style={{ background: "#fff", border: pending ? "1px solid #FBE3B8" : "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ fontSize: 12, color: "#8FA6A4" }}>
+                      <div style={{ fontSize: 12, color: "#8AA2BC" }}>
                         {catName(p.categoryId) ? catName(p.categoryId) + " · " : ""}${fmt(p.price)}
                         {p.modifiers && p.modifiers.length > 0 ? ` · ${p.modifiers.length} modificador${p.modifiers.length > 1 ? "es" : ""}` : ""}
                       </div>
@@ -1120,27 +1108,31 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
                         </div>
                       )}
                       {pending && (
-                        <div style={{ fontSize: 11, color: "#D97706", display: "flex", alignItems: "center", gap: 3, marginTop: 2, fontWeight: 600 }}>
+                        <div style={{ fontSize: 11, color: "#A85C06", display: "flex", alignItems: "center", gap: 3, marginTop: 2, fontWeight: 600 }}>
                           <CircleAlert size={11} /> Falta {!p.price ? "precio" : ""}{!p.price && !p.cost ? " y " : ""}{!p.cost ? "costo" : ""}
                         </div>
                       )}
                     </div>
-                    <div style={{ fontSize: 12.5, fontWeight: 700, padding: "4px 9px", borderRadius: 20, background: low ? "#FDF0DC" : "#E4ECFB", color: low ? "#D97706" : "#1B4F9C", display: "flex", alignItems: "center", gap: 4 }}>
-                      {low && <AlertTriangle size={12} />} {p.stock}
-                    </div>
+                    <span style={badgeStock(p.stock, LOW_STOCK).estilo}>{badgeStock(p.stock, LOW_STOCK).texto}</span>
                     <IconBtn onClick={() => onPrintLabel(p)}><Tag size={13} /></IconBtn>
                     <IconBtn onClick={() => openEditProduct(p)}><Pencil size={13} /></IconBtn>
                     <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${p.name}"?`)) deleteProduct(p.id); }}><Trash2 size={13} /></IconBtn>
                   </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #F0F4F3" }}>
-                    <button onClick={() => onSumarStock(p)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "6px 4px", borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontSize: 11.5, fontWeight: 600 }}>
-                      <PackagePlus size={12} /> Sumar stock
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #EDF2F8" }}>
+                    {!p.price ? (
+                      <button onClick={() => onEditarPrecio(p)} style={{ ...btn("primario", "sm"), flex: 1 }}>
+                        <DollarSign size={13} /> Poner precio
+                      </button>
+                    ) : (
+                      <button onClick={() => onEditarPrecio(p)} style={{ ...btn("secundario", "sm"), flex: 1 }}>
+                        <DollarSign size={13} /> Editar precio
+                      </button>
+                    )}
+                    <button onClick={() => onSumarStock(p)} style={{ ...btn("secundario", "sm"), flex: 1 }}>
+                      <PackagePlus size={13} /> Sumar stock
                     </button>
-                    <button onClick={() => onEditarPrecio(p)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "6px 4px", borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontSize: 11.5, fontWeight: 600 }}>
-                      <DollarSign size={12} /> Editar precio
-                    </button>
-                    <button onClick={() => onDuplicate(p)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "6px 4px", borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontSize: 11.5, fontWeight: 600 }}>
-                      <Copy size={12} /> Duplicar
+                    <button onClick={() => onDuplicate(p)} style={{ ...btn("secundario", "sm"), flex: 1 }}>
+                      <Copy size={13} /> Duplicar
                     </button>
                   </div>
                 </div>
@@ -1150,16 +1142,16 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
         </>
       ) : (
         <>
-          <button onClick={openNewCategory} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #1B4F9C", background: "#fff", color: "#1B4F9C", fontWeight: 700, fontSize: 14, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <button onClick={openNewCategory} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 14 }}>
             <Plus size={16} /> Agregar categoría
           </button>
           {categories.length === 0 && <EmptyState text="Todavía no creaste categorías." />}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {categories.map((c) => (
-              <div key={c.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+              <div key={c.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
                 <Tag size={15} style={{ color: "#1B4F9C" }} />
                 <div style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{c.name}</div>
-                <div style={{ fontSize: 12, color: "#8FA6A4" }}>{products.filter((p) => p.categoryId === c.id).length} productos</div>
+                <div style={{ fontSize: 12, color: "#8AA2BC" }}>{products.filter((p) => p.categoryId === c.id).length} productos</div>
                 <IconBtn onClick={() => openEditCategory(c)}><Pencil size={13} /></IconBtn>
                 <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${c.name}"?`)) deleteCategory(c.id); }}><Trash2 size={13} /></IconBtn>
               </div>
@@ -1173,15 +1165,15 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
 
 function MetricCard({ label, value, warn }) {
   return (
-    <div style={{ flex: 1, background: warn ? "#FDF0DC" : "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "12px 14px" }}>
-      <div style={{ fontSize: 12, color: "#8FA6A4", marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: warn ? "#D97706" : "#1B2A2E" }}>{value}</div>
+    <div style={{ flex: 1, background: warn ? "#FDF0DC" : "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "12px 14px" }}>
+      <div style={{ fontSize: 12, color: "#8AA2BC", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: warn ? "#A85C06" : "#10243D" }}>{value}</div>
     </div>
   );
 }
 
 function EmptyState({ text }) {
-  return <div style={{ textAlign: "center", padding: "30px 16px", color: "#8FA6A4", fontSize: 13.5 }}>{text}</div>;
+  return <div style={{ textAlign: "center", padding: "30px 16px", color: "#8AA2BC", fontSize: 13.5 }}>{text}</div>;
 }
 
 // ---------------- Resumen ----------------
@@ -1286,10 +1278,10 @@ function ResumenTab({ sales, categories, employees, range, setRange, products })
             {topProducts.map(([name, data]) => (
               <div key={name} style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
-                  <span style={{ fontWeight: 500 }}>{name} <span style={{ color: "#8FA6A4", fontWeight: 400 }}>x{data.qty}</span></span>
+                  <span style={{ fontWeight: 500 }}>{name} <span style={{ color: "#8AA2BC", fontWeight: 400 }}>x{data.qty}</span></span>
                   <span style={{ fontWeight: 700 }}>${fmt(data.revenue)}</span>
                 </div>
-                <div style={{ height: 6, background: "#EFF4F3", borderRadius: 4 }}>
+                <div style={{ height: 6, background: "#EDF2F8", borderRadius: 4 }}>
                   <div style={{ height: 6, width: `${maxRevenue ? (data.revenue / maxRevenue) * 100 : 0}%`, background: "#1B4F9C", borderRadius: 4 }} />
                 </div>
               </div>
@@ -1303,8 +1295,8 @@ function ResumenTab({ sales, categories, employees, range, setRange, products })
 
 function Section({ title, children }) {
   return (
-    <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 14, marginBottom: 12 }}>
-      <div style={{ fontSize: 12.5, fontWeight: 700, color: "#5C7A78", marginBottom: 10 }}>{title.toUpperCase()}</div>
+    <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 14, marginBottom: 12 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: "#5B7791", marginBottom: 10 }}>{title.toUpperCase()}</div>
       {children}
     </div>
   );
@@ -1315,7 +1307,7 @@ function BarRow({ label, value, max }) {
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
         <span>{label}</span><span style={{ fontWeight: 700 }}>${fmt(value)}</span>
       </div>
-      <div style={{ height: 6, background: "#EFF4F3", borderRadius: 4 }}>
+      <div style={{ height: 6, background: "#EDF2F8", borderRadius: 4 }}>
         <div style={{ height: 6, width: `${max ? (value / max) * 100 : 0}%`, background: "#1B4F9C", borderRadius: 4 }} />
       </div>
     </div>
@@ -1335,11 +1327,11 @@ function HistorialTab({ sales, onView, onDelete, methodLabel }) {
       {sales.length === 0 && <EmptyState text="Todavía no registraste ninguna venta." />}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {sales.map((s) => (
-          <div key={s.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+          <div key={s.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => onView(s)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontSize: 13.5, fontWeight: 600 }}>Comprobante #{s.number}</div>
-                <div style={{ fontSize: 12, color: "#8FA6A4" }}>
+                <div style={{ fontSize: 12, color: "#8AA2BC" }}>
                   {new Date(s.date).toLocaleString("es-AR")} · {methodLabel[s.method]}{s.employeeName ? ` · ${s.employeeName}` : ""}
                 </div>
               </div>
@@ -1365,19 +1357,19 @@ function HistorialTab({ sales, onView, onDelete, methodLabel }) {
 function EquipoTab({ employees, openNew, openEdit, onDelete }) {
   return (
     <div>
-      <button onClick={openNew} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #1B4F9C", background: "#fff", color: "#1B4F9C", fontWeight: 700, fontSize: 14, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <button onClick={openNew} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 14 }}>
         <Plus size={16} /> Agregar empleado
       </button>
       {employees.length === 0 && <EmptyState text="Sin empleados cargados. Mientras no haya ninguno, la app se usa sin selección de usuario." />}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {employees.map((e) => (
-          <div key={e.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+          <div key={e.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#E4ECFB", color: "#1B4F9C", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 }}>
               {e.name.slice(0, 1).toUpperCase()}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600 }}>{e.name}</div>
-              <div style={{ fontSize: 12, color: "#8FA6A4" }}>{e.pin ? "Con PIN" : "Sin PIN"}</div>
+              <div style={{ fontSize: 12, color: "#8AA2BC" }}>{e.pin ? "Con PIN" : "Sin PIN"}</div>
             </div>
             <IconBtn onClick={() => openEdit(e)}><Pencil size={13} /></IconBtn>
             <IconBtn danger onClick={() => { if (confirm(`¿Eliminar a "${e.name}"?`)) onDelete(e.id); }}><Trash2 size={13} /></IconBtn>
@@ -1401,28 +1393,25 @@ function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar, onExport
 
   return (
     <div>
-      <button
-        onClick={onExport}
-        style={{ width: "100%", padding: 11, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B4F9C", fontWeight: 600, fontSize: 12.5, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-      >
-        <FileSpreadsheet size={14} /> Exportar movimientos a Excel
+      <button onClick={onExport} style={{ ...btn("secundario"), width: "100%", marginBottom: 16 }}>
+        <FileSpreadsheet size={15} /> Exportar movimientos a Excel
       </button>
 
       {!cajaActual ? (
-        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+        <div style={card()}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Abrir caja</div>
           <Field label="Efectivo con el que arrancás el turno">
             <input type="number" min="0" step="0.01" value={openAmount} onChange={(e) => setOpenAmount(e.target.value)} placeholder="0.00" style={inputStyle} />
           </Field>
           <button
             onClick={() => { const amt = parseFloat(openAmount) || 0; onAbrir(amt); setOpenAmount(""); }}
-            style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14 }}
+            style={{ ...btn("primario", "lg"), width: "100%" }}
           >
             Abrir caja
           </button>
         </div>
       ) : (
-        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+        <div style={{ ...card(), marginBottom: 16 }}>
           <div style={{ fontSize: 12.5, color: "#1B4F9C", fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
             <Banknote size={14} /> Caja abierta desde {new Date(cajaActual.openedAt).toLocaleString("es-AR")}
           </div>
@@ -1430,7 +1419,7 @@ function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar, onExport
             <MetricCard label="Apertura" value={"$" + fmt(cajaActual.openingAmount)} />
             <MetricCard label="Ventas efectivo" value={"$" + fmt(ventasEfectivoActual)} />
           </div>
-          <div style={{ fontSize: 13, color: "#5C7A78", marginBottom: 10 }}>Efectivo esperado en caja: <b>${fmt(esperadoActual)}</b></div>
+          <div style={{ fontSize: 13, color: "#5B7791", marginBottom: 10 }}>Efectivo esperado en caja: <b>${fmt(esperadoActual)}</b></div>
           <Field label="Efectivo contado al cerrar">
             <input type="number" min="0" step="0.01" value={countedAmount} onChange={(e) => setCountedAmount(e.target.value)} placeholder="0.00" style={inputStyle} />
           </Field>
@@ -1440,7 +1429,7 @@ function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar, onExport
               onCerrar(amt);
               setCountedAmount("");
             }}
-            style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14 }}
+            style={{ ...btn("primario", "lg"), width: "100%" }}
           >
             Cerrar caja
           </button>
@@ -1450,12 +1439,12 @@ function CajaTab({ cajaActual, cajaHistorial, sales, onAbrir, onCerrar, onExport
       {cajaHistorial.length > 0 && (
         <Section title="Historial de cajas">
           {cajaHistorial.map((c) => (
-            <div key={c.id} style={{ padding: "8px 0", borderBottom: "1px solid #F0F4F3" }}>
+            <div key={c.id} style={{ padding: "8px 0", borderBottom: "1px solid #EDF2F8" }}>
               <div style={{ fontSize: 12.5, fontWeight: 600 }}>{new Date(c.openedAt).toLocaleDateString("es-AR")}{c.employeeName ? ` · ${c.employeeName}` : ""}</div>
-              <div style={{ fontSize: 12, color: "#8FA6A4" }}>
+              <div style={{ fontSize: 12, color: "#8AA2BC" }}>
                 Apertura ${fmt(c.openingAmount)} · Esperado ${fmt(c.esperado)} · Contado ${fmt(c.counted)}
               </div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: c.diferencia === 0 ? "#1B4F9C" : c.diferencia > 0 ? "#1B4F9C" : "#E4262B" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: c.diferencia === 0 ? "#1B4F9C" : c.diferencia > 0 ? "#1B4F9C" : "#B0242A" }}>
                 Diferencia: {c.diferencia >= 0 ? "+" : ""}${fmt(c.diferencia)}
               </div>
             </div>
@@ -1472,7 +1461,7 @@ function AvisosTab({ observaciones, currentUser, onAdd, onDelete }) {
   const [text, setText] = useState("");
   return (
     <div>
-      <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+      <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 14, marginBottom: 16 }}>
         <textarea
           value={text} onChange={(e) => setText(e.target.value)}
           placeholder="Ej: esta semana el detergente 500ml tiene 15% de descuento..."
@@ -1480,7 +1469,7 @@ function AvisosTab({ observaciones, currentUser, onAdd, onDelete }) {
         />
         <button
           onClick={() => { onAdd(text); setText(""); }}
-          style={{ width: "100%", padding: 11, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 13.5 }}
+          style={{ ...btn("primario", "lg"), width: "100%" }}
         >
           Publicar aviso
         </button>
@@ -1489,10 +1478,10 @@ function AvisosTab({ observaciones, currentUser, onAdd, onDelete }) {
       {observaciones.length === 0 && <EmptyState text="Todavía no hay avisos publicados." />}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {observaciones.map((o) => (
-          <div key={o.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "12px 14px" }}>
+          <div key={o.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "12px 14px" }}>
             <div style={{ fontSize: 13.5, marginBottom: 8, whiteSpace: "pre-wrap" }}>{o.text}</div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontSize: 11.5, color: "#8FA6A4" }}>{o.author} · {new Date(o.date).toLocaleString("es-AR")}</div>
+              <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>{o.author} · {new Date(o.date).toLocaleString("es-AR")}</div>
               <IconBtn danger onClick={() => { if (confirm("¿Eliminar este aviso?")) onDelete(o.id); }}><Trash2 size={13} /></IconBtn>
             </div>
           </div>
@@ -1507,15 +1496,15 @@ function AvisosTab({ observaciones, currentUser, onAdd, onDelete }) {
 function AccesosTab({ accountUsers, currentUser, openNew, openEdit, onDelete }) {
   return (
     <div>
-      <div style={{ fontSize: 12.5, color: "#8FA6A4", marginBottom: 12 }}>
+      <div style={{ fontSize: 12.5, color: "#8AA2BC", marginBottom: 12 }}>
         Estos son los usuarios que pueden entrar a esta app (distinto de los empleados que atienden en Vender).
       </div>
-      <button onClick={openNew} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #1B4F9C", background: "#fff", color: "#1B4F9C", fontWeight: 700, fontSize: 14, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <button onClick={openNew} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 14 }}>
         <Plus size={16} /> Agregar usuario
       </button>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {accountUsers.map((u) => (
-          <div key={u.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+          <div key={u.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
             <Lock size={15} style={{ color: "#1B4F9C" }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600 }}>{u.username}{u.username === currentUser ? " (vos)" : ""}</div>
@@ -1543,11 +1532,11 @@ function AccountFormModal({ form, setForm, onSave, onClose }) {
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>{isEdit ? "Editar usuario" : "Nuevo usuario"}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
       <Field label="Usuario"><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} style={inputStyle} /></Field>
       <Field label="Contraseña"><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} style={inputStyle} /></Field>
-      <button onClick={onSave} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>Guardar</button>
+      <button onClick={onSave} style={btn("primario", "lg")}>Guardar</button>
     </Overlay>
   );
 }
@@ -1589,7 +1578,7 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>{isEdit ? "Editar producto" : "Nuevo producto"}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
 
       <Field label="Nombre"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ej: Detergente 1L" style={inputStyle} /></Field>
@@ -1617,7 +1606,7 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
               onKeyDown={(e) => e.key === "Enter" && confirmNewCategory()}
               placeholder="Nombre de la nueva categoría" style={{ ...inputStyle, flex: 1 }}
             />
-            <button onClick={confirmNewCategory} style={{ padding: "0 14px", borderRadius: 9, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 13 }}>Crear</button>
+            <button onClick={confirmNewCategory} style={btn("secundario", "sm")}>Crear</button>
             <IconBtn onClick={() => { setNewCatMode(false); setNewCatName(""); }}><X size={13} /></IconBtn>
           </div>
         )}
@@ -1627,15 +1616,15 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
         <Field label="Precio de compra (costo, opcional)" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.cost || ""} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
       </div>
       {cost > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#F6F9FE", border: "1px solid #E4ECFB", borderRadius: 10, padding: "8px 10px", marginBottom: 12, marginTop: -4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.azulSuave, border: `1px solid ${C.azulBorde}`, borderRadius: 10, padding: "8px 10px", marginBottom: 12, marginTop: -4 }}>
           <DollarSign size={14} style={{ color: "#1B4F9C", flexShrink: 0 }} />
-          <span style={{ fontSize: 12, color: "#5C7A78" }}>Margen deseado</span>
+          <span style={{ fontSize: 12, color: "#5B7791" }}>Margen deseado</span>
           <input type="number" min="0" value={margenDeseado} onChange={(e) => setMargenDeseado(e.target.value)} style={{ ...inputStyle, width: 56, padding: "5px 6px", fontSize: 12.5 }} />
-          <span style={{ fontSize: 12, color: "#5C7A78" }}>%</span>
+          <span style={{ fontSize: 12, color: "#5B7791" }}>%</span>
           {precioSugerido !== null && (
             <button
               onClick={() => setForm({ ...form, price: precioSugerido.toFixed(2) })}
-              style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "#1B4F9C", background: "#E4ECFB", border: "none", borderRadius: 8, padding: "6px 10px", whiteSpace: "nowrap" }}
+              style={{ ...btn("secundario", "sm"), marginLeft: "auto", whiteSpace: "nowrap" }}
             >
               Usar ${fmt(precioSugerido)}
             </button>
@@ -1652,16 +1641,16 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
             <IconBtn danger onClick={() => removeModifier(idx)}><Trash2 size={13} /></IconBtn>
           </div>
         ))}
-        <button onClick={addModifier} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", color: "#1B4F9C", fontSize: 12.5, fontWeight: 600, padding: "4px 0" }}>
+        <button onClick={addModifier} style={btn("terciario", "sm")}>
           <Plus size={13} /> Agregar modificador
         </button>
       </Field>
 
-      <button onClick={() => handleSave(false)} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>
+      <button onClick={() => handleSave(false)} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8 }}>
         {isEdit ? "Guardar cambios" : "Agregar producto"}
       </button>
       {!isEdit && (
-        <button onClick={() => handleSave(true)} style={{ width: "100%", marginTop: 8, padding: 12, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B4F9C", fontWeight: 700, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <button onClick={() => handleSave(true)} style={{ ...btn("secundario"), width: "100%", marginTop: 8 }}>
           <PackagePlus size={15} /> Guardar y cargar otro
         </button>
       )}
@@ -1674,10 +1663,10 @@ function CategoryFormModal({ form, setForm, onSave, onClose }) {
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>{form.id ? "Editar categoría" : "Nueva categoría"}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
       <Field label="Nombre"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ej: Limpieza de cocina" style={inputStyle} /></Field>
-      <button onClick={onSave} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>Guardar</button>
+      <button onClick={onSave} style={btn("primario", "lg")}>Guardar</button>
     </Overlay>
   );
 }
@@ -1687,13 +1676,13 @@ function EmployeeFormModal({ form, setForm, onSave, onClose }) {
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>{form.id ? "Editar empleado" : "Nuevo empleado"}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
       <Field label="Nombre"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ej: Juan" style={inputStyle} /></Field>
       <Field label="PIN de 4 dígitos (opcional)">
         <input value={form.pin || ""} inputMode="numeric" maxLength={4} onChange={(e) => setForm({ ...form, pin: e.target.value.replace(/\D/g, "").slice(0, 4) })} placeholder="Sin PIN" style={inputStyle} />
       </Field>
-      <button onClick={onSave} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>Guardar</button>
+      <button onClick={onSave} style={btn("primario", "lg")}>Guardar</button>
     </Overlay>
   );
 }
@@ -1708,22 +1697,22 @@ function ModifierPickerModal({ product, onClose, onConfirm }) {
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>{product.name}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
-      <div style={{ fontSize: 12.5, color: "#5C7A78", marginBottom: 10, fontWeight: 600 }}>ELEGIR OPCIONES</div>
+      <div style={{ fontSize: 12.5, color: "#5B7791", marginBottom: 10, fontWeight: 600 }}>ELEGIR OPCIONES</div>
       {product.modifiers.map((m, idx) => {
         const active = selected.some((s) => s.name === m.name);
         return (
           <button key={idx} onClick={() => toggle(m)} style={{
             width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 12px",
-            borderRadius: 10, border: active ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5", background: active ? "#E4ECFB" : "#fff", marginBottom: 8,
+            borderRadius: 10, border: active ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2", background: active ? "#E4ECFB" : "#fff", marginBottom: 8,
           }}>
-            <span style={{ fontSize: 13.5, fontWeight: 500, color: active ? "#1B4F9C" : "#1B2A2E" }}>{m.name}</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: active ? "#1B4F9C" : "#5C7A78" }}>+${fmt(m.price)}</span>
+            <span style={{ fontSize: 13.5, fontWeight: 500, color: active ? "#1B4F9C" : "#10243D" }}>{m.name}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: active ? "#1B4F9C" : "#5B7791" }}>+${fmt(m.price)}</span>
           </button>
         );
       })}
-      <button onClick={() => onConfirm(selected)} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>
+      <button onClick={() => onConfirm(selected)} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8 }}>
         Agregar · ${fmt(product.price + extra)}
       </button>
     </Overlay>
@@ -1734,19 +1723,19 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
   return (
     <Overlay onClose={onClose}>
       <div className="no-print" style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
-      <div className="receipt-print" style={{ background: "#fff", borderRadius: 4, padding: "22px 20px", fontFamily: mono, border: "1px solid #E3ECEA" }}>
+      <div className="receipt-print" style={{ background: "#fff", borderRadius: 4, padding: "22px 20px", fontFamily: mono, border: "1px solid #E1EAF4" }}>
         <div style={{ textAlign: "center", marginBottom: 4 }}>
           <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>AGUA Y JABÓN</div>
-          <div style={{ fontSize: 10.5, color: "#8FA6A4", marginTop: 2 }}>Comprobante interno · no válido como factura fiscal</div>
+          <div style={{ fontSize: 10.5, color: "#8AA2BC", marginTop: 2 }}>Comprobante interno · no válido como factura fiscal</div>
         </div>
         <Dashed />
         <div style={{ fontSize: 12, display: "flex", justifyContent: "space-between", margin: "8px 0 4px" }}>
           <span>N° {String(sale.number).padStart(4, "0")}</span>
           <span>{new Date(sale.date).toLocaleString("es-AR")}</span>
         </div>
-        {sale.employeeName && <div style={{ fontSize: 11.5, color: "#8FA6A4" }}>Atendió: {sale.employeeName}</div>}
+        {sale.employeeName && <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>Atendió: {sale.employeeName}</div>}
         <Dashed />
         <div style={{ margin: "8px 0" }}>
           {sale.items.map((i, idx) => {
@@ -1758,9 +1747,9 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
                   <span>${fmt((i.price + extras) * i.qty)}</span>
                 </div>
                 {i.modifiers && i.modifiers.length > 0 && (
-                  <div style={{ fontSize: 10.5, color: "#8FA6A4" }}>{i.modifiers.map((m) => m.name).join(", ")}</div>
+                  <div style={{ fontSize: 10.5, color: "#8AA2BC" }}>{i.modifiers.map((m) => m.name).join(", ")}</div>
                 )}
-                <div style={{ fontSize: 10.5, color: "#8FA6A4" }}>{i.qty} x ${fmt(i.price + extras)}</div>
+                <div style={{ fontSize: 10.5, color: "#8AA2BC" }}>{i.qty} x ${fmt(i.price + extras)}</div>
               </div>
             );
           })}
@@ -1768,27 +1757,27 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
         <Dashed />
         {sale.discountAmount > 0 && (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5C7A78" }}><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#D97706" }}><span>Descuento</span><span>-${fmt(sale.discountAmount)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5B7791" }}><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#A85C06" }}><span>Descuento</span><span>-${fmt(sale.discountAmount)}</span></div>
           </>
         )}
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, margin: "8px 0" }}>
           <span>TOTAL</span><span>${fmt(sale.total)}</span>
         </div>
-        <div style={{ fontSize: 11.5, color: "#5C7A78" }}>Pago: {methodLabel[sale.method]}</div>
+        <div style={{ fontSize: 11.5, color: "#5B7791" }}>Pago: {methodLabel[sale.method]}</div>
         <Dashed />
-        <div style={{ textAlign: "center", fontSize: 10.5, color: "#8FA6A4", marginTop: 6 }}>¡Gracias por su compra!</div>
+        <div style={{ textAlign: "center", fontSize: 10.5, color: "#8AA2BC", marginTop: 6 }}>¡Gracias por su compra!</div>
       </div>
 
-      <button onClick={() => window.print()} className="no-print" style={{ width: "100%", marginTop: 12, padding: 12, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B2A2E", fontWeight: 600, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <button onClick={() => window.print()} className="no-print" style={{ ...btn("secundario"), width: "100%", marginTop: 12 }}>
         <Printer size={15} /> Imprimir
       </button>
-      <button onClick={onClose} className="no-print" style={{ width: "100%", marginTop: 8, padding: 12, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14 }}>Listo</button>
+      <button onClick={onClose} className="no-print" style={{ ...btn("terciario"), width: "100%", marginTop: 8 }}>Listo</button>
     </Overlay>
   );
 }
 
-function Dashed() { return <div style={{ borderTop: "1.5px dashed #DCE7E5", margin: "4px 0" }} />; }
+function Dashed() { return <div style={{ borderTop: "1.5px dashed #DBE6F2", margin: "4px 0" }} />; }
 
 // ---------------- Etiquetas (impresora térmica 80mm) ----------------
 
@@ -1812,9 +1801,9 @@ function StockAdjustModal({ product, onConfirm, onClose }) {
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>Sumar stock · {product.name}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
-      <div style={{ fontSize: 12.5, color: "#8FA6A4", marginBottom: 10 }}>Stock actual: {product.stock}</div>
+      <div style={{ fontSize: 12.5, color: "#8AA2BC", marginBottom: 10 }}>Stock actual: {product.stock}</div>
       <Field label="Cantidad a sumar">
         <input
           autoFocus type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)}
@@ -1824,7 +1813,7 @@ function StockAdjustModal({ product, onConfirm, onClose }) {
       </Field>
       <button
         onClick={() => onConfirm(parseInt(amount, 10))}
-        style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}
+        style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8 }}
       >
         Sumar al stock
       </button>
@@ -1838,7 +1827,7 @@ function PriceEditModal({ product, onConfirm, onClose }) {
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>Editar precio · {product.name}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
       <Field label="Precio de venta">
         <input
@@ -1849,7 +1838,7 @@ function PriceEditModal({ product, onConfirm, onClose }) {
       </Field>
       <button
         onClick={() => onConfirm(parseFloat(price))}
-        style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}
+        style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8 }}
       >
         Guardar precio
       </button>
@@ -1865,7 +1854,7 @@ function LabelModal({ product, onClose }) {
     <Overlay onClose={onClose}>
       <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>Etiqueta · {product.name}</div>
-        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
 
       <div className="no-print" style={{ marginBottom: 14 }}>
@@ -1877,7 +1866,7 @@ function LabelModal({ product, onClose }) {
       <div className="label-print" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {Array.from({ length: n }).map((_, i) => (
           <div key={i} style={{
-            width: "76mm", padding: "3mm", border: "1px dashed #DCE7E5", borderRadius: 4,
+            width: "76mm", padding: "3mm", border: "1px dashed #DBE6F2", borderRadius: 4,
             textAlign: "center", background: "#fff", fontFamily: sans,
           }}>
             <div style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{product.name}</div>
@@ -1885,15 +1874,15 @@ function LabelModal({ product, onClose }) {
             <div style={{ display: "flex", justifyContent: "center" }}>
               <BarcodeSVG value={product.barcode} />
             </div>
-            <div style={{ fontSize: 9, letterSpacing: 1, color: "#5C7A78", marginTop: 1 }}>{product.barcode}</div>
+            <div style={{ fontSize: 9, letterSpacing: 1, color: "#5B7791", marginTop: 1 }}>{product.barcode}</div>
           </div>
         ))}
       </div>
 
-      <button onClick={() => window.print()} className="no-print" style={{ width: "100%", marginTop: 14, padding: 12, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B2A2E", fontWeight: 600, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <button onClick={() => window.print()} className="no-print" style={{ ...btn("primario", "lg"), width: "100%", marginTop: 14 }}>
         <Printer size={15} /> Imprimir {n > 1 ? `(${n} etiquetas)` : ""}
       </button>
-      <button onClick={onClose} className="no-print" style={{ width: "100%", marginTop: 8, padding: 12, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14 }}>
+      <button onClick={onClose} className="no-print" style={{ ...btn("terciario"), width: "100%", marginTop: 8 }}>
         Listo
       </button>
     </Overlay>
@@ -1903,17 +1892,17 @@ function LabelModal({ product, onClose }) {
 function Field({ label, children, style }) {
   return (
     <div style={{ marginBottom: 12, ...style }}>
-      <div style={{ fontSize: 12.5, color: "#5C7A78", marginBottom: 5, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 12.5, color: "#5B7791", marginBottom: 5, fontWeight: 600 }}>{label}</div>
       {children}
     </div>
   );
 }
-const inputStyle = { width: "100%", padding: "9px 11px", borderRadius: 9, border: "1px solid #DCE7E5", fontSize: 14 };
+const inputStyle = inputBase;
 
 function Overlay({ children, onClose }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,30,28,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#F6F9F8", borderRadius: "18px 18px 0 0", padding: 20, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#F2F6FB", borderRadius: "18px 18px 0 0", padding: 20, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
         {children}
       </div>
     </div>
