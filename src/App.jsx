@@ -878,20 +878,22 @@ function VenderTab({
                   <div style={{ fontSize: 14.5, fontWeight: 700, marginBottom: 5, lineHeight: 1.25, color: "#10243D" }}>{p.name}</div>
                   <div style={{ fontSize: 21, fontWeight: 800, color: "#1B4F9C", marginBottom: 5 }}>${fmt(p.price)}</div>
                 </button>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
                   <span style={badgeStock(p.stock, LOW_STOCK).estilo}>{badgeStock(p.stock, LOW_STOCK).texto}</span>
-                  {!hasMods && (
-                    qty > 0 ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <button onClick={() => changeQty(line.lineId, -1)} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #DBE6F2", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={15} /></button>
-                        <span style={{ fontSize: 15, fontWeight: 800, minWidth: 22, textAlign: "center" }}>{qty}</span>
-                        <button onClick={() => onProductTap(p)} disabled={outOfStock} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "#1B4F9C", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
-                      </div>
-                    ) : (
-                      <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: outOfStock ? "#DBE6F2" : "#1B4F9C", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
-                    )
-                  )}
                 </div>
+                {!hasMods && (
+                  qty > 0 ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: C.azulSuave, borderRadius: 11, padding: "4px 6px" }}>
+                      <button onClick={() => changeQty(line.lineId, -1)} style={{ ...iconBtn("secundario"), width: 34, height: 34, background: "#fff" }}><Minus size={15} /></button>
+                      <span style={{ fontSize: 16, fontWeight: 800, minWidth: 20, textAlign: "center", color: C.azul }}>{qty}</span>
+                      <button onClick={() => onProductTap(p)} disabled={outOfStock} style={{ ...iconBtn("primario"), width: 34, height: 34 }}><Plus size={15} /></button>
+                    </div>
+                  ) : (
+                    <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ ...btn(outOfStock ? "secundario" : "primario", "sm"), width: "100%", opacity: outOfStock ? 0.5 : 1 }}>
+                      <Plus size={15} /> Agregar
+                    </button>
+                  )
+                )}
               </div>
             );
           })}
@@ -1044,7 +1046,7 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
               <span style={{ fontSize: 12.5, color: "#92600B", fontWeight: 600, textAlign: "left", flex: 1 }}>
                 {pendingCount} producto{pendingCount !== 1 ? "s" : ""} sin precio o costo cargado
               </span>
-              <span style={{ fontSize: 11.5, color: "#A85C06", fontWeight: 700 }}>{onlyPending ? "Ver todos" : "Ver"}</span>
+              <span style={{ fontSize: 11.5, color: "#A85C06", fontWeight: 700 }}>{onlyPending ? "Ver todos" : "Cargar precios"}</span>
             </button>
           )}
           <button onClick={openNewProduct} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 8 }}>
@@ -1094,46 +1096,41 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
               const m = margin(p);
               const pending = isPending(p);
               return (
-                <div key={p.id} style={{ background: "#fff", border: pending ? "1px solid #FBE3B8" : "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ fontSize: 12, color: "#8AA2BC" }}>
-                        {catName(p.categoryId) ? catName(p.categoryId) + " · " : ""}${fmt(p.price)}
-                        {p.modifiers && p.modifiers.length > 0 ? ` · ${p.modifiers.length} modificador${p.modifiers.length > 1 ? "es" : ""}` : ""}
+                <div key={p.id} style={{
+                  background: "#fff", border: pending ? "1px solid #FBE3B8" : "1px solid #E1EAF4", borderRadius: 12, padding: "12px 14px",
+                  display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+                }}>
+                  <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>{p.name}</div>
+                    {pending ? (
+                      <div style={{ fontSize: 12, color: C.rojo, fontWeight: 600, marginTop: 2 }}>
+                        Falta {!p.price ? "precio" : ""}{!p.price && !p.cost ? " y " : ""}{!p.cost ? "costo" : ""}
                       </div>
-                      {m !== null && (
-                        <div style={{ fontSize: 11, color: "#1B4F9C", display: "flex", alignItems: "center", gap: 3, marginTop: 2 }}>
-                          <TrendingUp size={11} /> Margen {m.toFixed(0)}% (costo ${fmt(p.cost)})
-                        </div>
-                      )}
-                      {pending && (
-                        <div style={{ fontSize: 11, color: "#A85C06", display: "flex", alignItems: "center", gap: 3, marginTop: 2, fontWeight: 600 }}>
-                          <CircleAlert size={11} /> Falta {!p.price ? "precio" : ""}{!p.price && !p.cost ? " y " : ""}{!p.cost ? "costo" : ""}
-                        </div>
-                      )}
-                    </div>
-                    <span style={badgeStock(p.stock, LOW_STOCK).estilo}>{badgeStock(p.stock, LOW_STOCK).texto}</span>
+                    ) : (
+                      <div style={{ fontSize: 12, color: "#8AA2BC", marginTop: 2 }}>
+                        {catName(p.categoryId) ? catName(p.categoryId) + " · " : ""}
+                        {p.modifiers && p.modifiers.length > 0 ? `${p.modifiers.length} modificador${p.modifiers.length > 1 ? "es" : ""}` : ""}
+                      </div>
+                    )}
+                    {m !== null && (
+                      <div style={{ fontSize: 11, color: "#1B4F9C", display: "flex", alignItems: "center", gap: 3, marginTop: 2 }}>
+                        <TrendingUp size={11} /> Margen {m.toFixed(0)}% (costo ${fmt(p.cost)})
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 19, fontWeight: 900, color: p.price ? "#1B4F9C" : "#B7C3D4", minWidth: 90 }}>${fmt(p.price)}</div>
+                  <span style={badgeStock(p.stock, LOW_STOCK).estilo}>{badgeStock(p.stock, LOW_STOCK).texto}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <button onClick={() => onEditarPrecio(p)} style={btn(pending ? "primario" : "secundario", "sm")}>
+                      <DollarSign size={13} /> {pending ? "Poner precio" : "Editar precio"}
+                    </button>
+                    <button onClick={() => onSumarStock(p)} style={btn("secundario", "sm")}>
+                      <PackagePlus size={13} /> Sumar stock
+                    </button>
+                    <IconBtn onClick={() => onDuplicate(p)}><Copy size={13} /></IconBtn>
                     <IconBtn onClick={() => onPrintLabel(p)}><Tag size={13} /></IconBtn>
                     <IconBtn onClick={() => openEditProduct(p)}><Pencil size={13} /></IconBtn>
                     <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${p.name}"?`)) deleteProduct(p.id); }}><Trash2 size={13} /></IconBtn>
-                  </div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #EDF2F8" }}>
-                    {!p.price ? (
-                      <button onClick={() => onEditarPrecio(p)} style={{ ...btn("primario", "sm"), flex: 1 }}>
-                        <DollarSign size={13} /> Poner precio
-                      </button>
-                    ) : (
-                      <button onClick={() => onEditarPrecio(p)} style={{ ...btn("secundario", "sm"), flex: 1 }}>
-                        <DollarSign size={13} /> Editar precio
-                      </button>
-                    )}
-                    <button onClick={() => onSumarStock(p)} style={{ ...btn("secundario", "sm"), flex: 1 }}>
-                      <PackagePlus size={13} /> Sumar stock
-                    </button>
-                    <button onClick={() => onDuplicate(p)} style={{ ...btn("secundario", "sm"), flex: 1 }}>
-                      <Copy size={13} /> Duplicar
-                    </button>
                   </div>
                 </div>
               );
