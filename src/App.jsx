@@ -1006,13 +1006,13 @@ function VenderTab({
                 </div>
                 {!hasMods && (
                   qty > 0 ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: C.azulSuave, borderRadius: 11, padding: "4px 6px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: C.azulSuave, borderRadius: 11, padding: "4px 6px", marginTop: "auto" }}>
                       <button onClick={() => changeQty(line.lineId, -1)} style={{ ...iconBtn("secundario"), width: 34, height: 34, background: "#fff" }}><Minus size={15} /></button>
                       <span style={{ fontSize: 16, fontWeight: 800, minWidth: 20, textAlign: "center", color: C.azul }}>{qty}</span>
                       <button onClick={() => onProductTap(p)} disabled={outOfStock} style={{ ...iconBtn("primario"), boxShadow: "none", width: 34, height: 34 }}><Plus size={15} /></button>
                     </div>
                   ) : (
-                    <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ ...btn(outOfStock ? "secundario" : "primario", "sm"), boxShadow: "none", width: "100%", opacity: outOfStock ? 0.5 : 1 }}>
+                    <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ ...btn(outOfStock ? "secundario" : "primario", "sm"), boxShadow: "none", width: "100%", opacity: outOfStock ? 0.5 : 1, marginTop: "auto" }}>
                       <Plus size={15} /> Agregar
                     </button>
                   )
