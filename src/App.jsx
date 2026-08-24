@@ -4,7 +4,8 @@ import {
   Wallet, CreditCard, ArrowLeftRight, AlertTriangle, Printer, Pencil,
   Users, BarChart3, Tag, Percent, LogOut, Lock, ChevronRight, Sliders,
   Download, ScanBarcode, Upload, FileSpreadsheet, Banknote, MessageSquare,
-  TrendingUp, Wand2,
+  TrendingUp, Wand2, Smartphone, Landmark, MoreHorizontal, Copy, PackagePlus,
+  DollarSign, CircleAlert, Check,
 } from "lucide-react";
 import { getData, setData } from "./lib/storage";
 import * as XLSX from "xlsx";
@@ -59,6 +60,8 @@ export default function PuntoDeVenta() {
   const [cajaHistorial, setCajaHistorial] = useState([]);
   const [observaciones, setObservaciones] = useState([]);
   const [labelProduct, setLabelProduct] = useState(null);
+  const [stockAdjustProduct, setStockAdjustProduct] = useState(null);
+  const [priceEditProduct, setPriceEditProduct] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -337,23 +340,39 @@ export default function PuntoDeVenta() {
   };
   const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "" });
   const openEditProduct = (p) => setProductForm({ ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "", cost: p.cost ? String(p.cost) : "" });
-  const saveProduct = () => {
-    const name = productForm.name.trim();
-    const price = parseFloat(productForm.price);
-    const stock = parseInt(productForm.stock, 10);
+  const duplicateProduct = (p) => setProductForm({
+    name: p.name + " (copia)", price: String(p.price), stock: "0",
+    categoryId: p.categoryId || "", modifiers: p.modifiers || [], barcode: "", cost: p.cost ? String(p.cost) : "",
+  });
+  const saveProduct = (formData, keepOpen) => {
+    const name = formData.name.trim();
+    const price = parseFloat(formData.price);
+    const stock = parseInt(formData.stock, 10);
     if (!name || isNaN(price) || price < 0 || isNaN(stock) || stock < 0) return;
-    const cost = parseFloat(productForm.cost);
-    let barcode = (productForm.barcode || "").trim();
+    const cost = parseFloat(formData.cost);
+    let barcode = (formData.barcode || "").trim();
     if (!barcode) barcode = genBarcode(products);
-    const data = { name, price, stock, categoryId: productForm.categoryId || "", modifiers: productForm.modifiers || [], barcode, cost: isNaN(cost) ? 0 : cost };
-    if (productForm.id) {
-      saveProducts(products.map((p) => (p.id === productForm.id ? { ...p, ...data } : p)));
+    const data = { name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode, cost: isNaN(cost) ? 0 : cost };
+    if (formData.id) {
+      saveProducts(products.map((p) => (p.id === formData.id ? { ...p, ...data } : p)));
     } else {
       saveProducts([...products, { id: uid(), ...data }]);
     }
-    setProductForm(null);
+    if (keepOpen) {
+      setProductForm({ name: "", price: "", stock: "", categoryId: formData.categoryId || "", modifiers: [], barcode: "", cost: "" });
+    } else {
+      setProductForm(null);
+    }
   };
   const deleteProduct = (id) => saveProducts(products.filter((p) => p.id !== id));
+  const sumarStock = (product, amount) => {
+    if (!amount || amount <= 0) return;
+    saveProducts(products.map((p) => (p.id === product.id ? { ...p, stock: p.stock + amount } : p)));
+  };
+  const editarPrecioRapido = (product, price) => {
+    if (isNaN(price) || price < 0) return;
+    saveProducts(products.map((p) => (p.id === product.id ? { ...p, price } : p)));
+  };
 
   const generarCodigosFaltantes = () => {
     let working = [...products];
@@ -529,8 +548,8 @@ export default function PuntoDeVenta() {
     URL.revokeObjectURL(url);
   };
 
-  const methodLabel = { efectivo: "Efectivo", tarjeta: "Tarjeta", transferencia: "Transferencia" };
-  const methodIcon = { efectivo: Wallet, tarjeta: CreditCard, transferencia: ArrowLeftRight };
+  const methodLabel = { efectivo: "Efectivo", transferencia: "Transferencia", debito: "Débito", credito: "Crédito", mercadopago: "Mercado Pago", otros: "Otros" };
+  const methodIcon = { efectivo: Wallet, transferencia: ArrowLeftRight, debito: CreditCard, credito: CreditCard, mercadopago: Smartphone, otros: MoreHorizontal };
 
   if (!loaded) {
     return <div style={{ padding: 40, textAlign: "center", color: "#5C7A78", fontFamily: sans }}>Cargando...</div>;
@@ -565,6 +584,16 @@ export default function PuntoDeVenta() {
     <div style={{ minHeight: "100%", background: "#F6F9F8", fontFamily: sans, color: "#1B2A2E" }}>
       <style>{`
         * { box-sizing: border-box; } button { font-family: inherit; cursor: pointer; } input, select { font-family: inherit; }
+        button:active { transform: scale(0.98); }
+        .vender-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; }
+        .vender-layout { display: block; }
+        .vender-cart { margin-top: 4px; }
+        @media (min-width: 900px) {
+          .vender-layout { display: flex; align-items: flex-start; gap: 20px; }
+          .vender-products { flex: 1; min-width: 0; }
+          .vender-cart { width: 360px; flex-shrink: 0; position: sticky; top: 16px; margin-top: 0; }
+          .vender-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+        }
         @media print {
           body * { visibility: hidden; }
           .receipt-print, .receipt-print * { visibility: visible; }
@@ -648,6 +677,9 @@ export default function PuntoDeVenta() {
             fileInputRef={fileInputRef} onImportExcel={handleImportExcel} onDownloadPlantilla={downloadPlantilla}
             onPrintLabel={(p) => setLabelProduct(p)}
             onGenerarCodigos={generarCodigosFaltantes}
+            onDuplicate={duplicateProduct}
+            onSumarStock={(p) => setStockAdjustProduct(p)}
+            onEditarPrecio={(p) => setPriceEditProduct(p)}
           />
         )}
         {tab === "resumen" && (
@@ -687,6 +719,20 @@ export default function PuntoDeVenta() {
       {receipt && <ReceiptModal sale={receipt} methodLabel={methodLabel} onClose={() => setReceipt(null)} />}
       {viewingSale && <ReceiptModal sale={viewingSale} methodLabel={methodLabel} onClose={() => setViewingSale(null)} />}
       {labelProduct && <LabelModal product={labelProduct} onClose={() => setLabelProduct(null)} />}
+      {stockAdjustProduct && (
+        <StockAdjustModal
+          product={stockAdjustProduct}
+          onConfirm={(amount) => { sumarStock(stockAdjustProduct, amount); setStockAdjustProduct(null); }}
+          onClose={() => setStockAdjustProduct(null)}
+        />
+      )}
+      {priceEditProduct && (
+        <PriceEditModal
+          product={priceEditProduct}
+          onConfirm={(price) => { editarPrecioRapido(priceEditProduct, price); setPriceEditProduct(null); }}
+          onClose={() => setPriceEditProduct(null)}
+        />
+      )}
     </div>
   );
 }
@@ -775,55 +821,99 @@ function VenderTab({
   onProductTap, changeQty, removeLine, payMethod, setPayMethod, methodLabel, methodIcon,
   discount, setDiscount, showDiscount, setShowDiscount, cobrar, onScan, scanMsg,
 }) {
+  const qtyInCart = (productId) =>
+    cart.filter((l) => l.productId === productId && (!l.modifiers || l.modifiers.length === 0))
+      .reduce((a, l) => a + l.qty, 0);
+  const lineForProduct = (productId) =>
+    cart.find((l) => l.productId === productId && (!l.modifiers || l.modifiers.length === 0));
+
   return (
-    <div>
-      <div style={{ position: "relative", marginBottom: 6 }}>
-        <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: "#8FA6A4" }} />
-        <input
-          autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onScan(search); } }}
-          placeholder="Buscar o escanear código de barras..." style={{ ...inputStyle, padding: "10px 34px 10px 34px" }}
-        />
-        <ScanBarcode size={16} style={{ position: "absolute", right: 12, top: 12, color: "#8FA6A4" }} />
-      </div>
-      {scanMsg && <div style={{ fontSize: 12, color: "#D97706", marginBottom: 8 }}>{scanMsg}</div>}
-
-      {categories.length > 0 && (
-        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
-          <Chip active={catFilter === "all"} onClick={() => setCatFilter("all")}>Todas</Chip>
-          {categories.map((c) => (
-            <Chip key={c.id} active={catFilter === c.id} onClick={() => setCatFilter(c.id)}>{c.name}</Chip>
-          ))}
+    <div className="vender-layout">
+      <div className="vender-products">
+        <div style={{ position: "relative", marginBottom: 8 }}>
+          <Search size={20} style={{ position: "absolute", left: 16, top: 16, color: "#8FA6A4" }} />
+          <input
+            autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onScan(search); } }}
+            placeholder="Buscar por nombre o escanear código de barras..."
+            style={{ ...inputStyle, padding: "16px 44px", fontSize: 16, borderRadius: 14, border: "1.5px solid #DCE7E5", boxShadow: "0 1px 3px rgba(16,40,80,0.04)" }}
+          />
+          <ScanBarcode size={20} style={{ position: "absolute", right: 16, top: 16, color: "#8FA6A4" }} />
         </div>
-      )}
+        {scanMsg && <div style={{ fontSize: 12, color: "#D97706", marginBottom: 8 }}>{scanMsg}</div>}
 
-      {products.length === 0 && <EmptyState text="No hay productos que coincidan. Cargá productos desde Artículos." />}
+        {categories.length > 0 && (
+          <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
+            <Chip active={catFilter === "all"} onClick={() => setCatFilter("all")}>Todas</Chip>
+            {categories.map((c) => (
+              <Chip key={c.id} active={catFilter === c.id} onClick={() => setCatFilter(c.id)}>{c.name}</Chip>
+            ))}
+          </div>
+        )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, marginBottom: 20 }}>
-        {products.map((p) => {
-          const outOfStock = p.stock <= 0;
-          return (
-            <button key={p.id} onClick={() => onProductTap(p)} disabled={outOfStock} style={{
-              textAlign: "left", background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: 12, opacity: outOfStock ? 0.45 : 1, position: "relative",
-            }}>
-              {p.modifiers && p.modifiers.length > 0 && <Sliders size={12} style={{ position: "absolute", top: 10, right: 10, color: "#8FA6A4" }} />}
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, lineHeight: 1.25 }}>{p.name}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#1B4F9C" }}>${fmt(p.price)}</div>
-              <div style={{ fontSize: 11.5, color: outOfStock ? "#D97706" : "#8FA6A4", marginTop: 4 }}>{outOfStock ? "Sin stock" : `${p.stock} en stock`}</div>
-            </button>
-          );
-        })}
+        {products.length === 0 && <EmptyState text="No hay productos que coincidan. Cargá productos desde Artículos." />}
+
+        <div className="vender-grid">
+          {products.map((p) => {
+            const outOfStock = p.stock <= 0;
+            const hasMods = p.modifiers && p.modifiers.length > 0;
+            const qty = hasMods ? 0 : qtyInCart(p.id);
+            const line = hasMods ? null : lineForProduct(p.id);
+            return (
+              <div key={p.id} style={{
+                background: "#fff", border: qty > 0 ? "1.5px solid #1B4F9C" : "1px solid #E3ECEA", borderRadius: 14, padding: 14,
+                opacity: outOfStock ? 0.45 : 1, position: "relative", display: "flex", flexDirection: "column", gap: 8,
+                boxShadow: qty > 0 ? "0 2px 10px rgba(27,79,156,0.10)" : "none",
+              }}>
+                {hasMods && <Sliders size={13} style={{ position: "absolute", top: 12, right: 12, color: "#8FA6A4" }} />}
+                <button
+                  onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock}
+                  style={{ textAlign: "left", background: "none", border: "none", padding: 0, cursor: outOfStock ? "default" : "pointer" }}
+                >
+                  <div style={{ fontSize: 14.5, fontWeight: 700, marginBottom: 5, lineHeight: 1.25, color: "#1B2A2E" }}>{p.name}</div>
+                  <div style={{ fontSize: 21, fontWeight: 800, color: "#1B4F9C", marginBottom: 5 }}>${fmt(p.price)}</div>
+                </button>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{
+                    fontSize: 11.5, fontWeight: 700, padding: "3px 8px", borderRadius: 20,
+                    background: outOfStock ? "#FDECEC" : p.stock <= LOW_STOCK ? "#FDF0DC" : "#F0F4F3",
+                    color: outOfStock ? "#E4262B" : p.stock <= LOW_STOCK ? "#D97706" : "#8FA6A4",
+                  }}>
+                    {outOfStock ? "Sin stock" : `${p.stock} en stock`}
+                  </span>
+                  {!hasMods && (
+                    qty > 0 ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <button onClick={() => changeQty(line.lineId, -1)} style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={15} /></button>
+                        <span style={{ fontSize: 15, fontWeight: 800, minWidth: 22, textAlign: "center" }}>{qty}</span>
+                        <button onClick={() => onProductTap(p)} disabled={outOfStock} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "#1B4F9C", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: outOfStock ? "#DCE7E5" : "#1B4F9C", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
+                    )
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {cart.length > 0 && (
-        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 14, padding: 14, position: "sticky", bottom: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, color: "#5C7A78" }}>CARRITO</div>
+      <div className="vender-cart">
+        <div style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 16, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "#5C7A78", letterSpacing: 0.3 }}>CARRITO</div>
+          {cart.length === 0 && (
+            <div style={{ textAlign: "center", padding: "22px 8px", color: "#8FA6A4", fontSize: 13 }}>
+              <ShoppingCart size={26} style={{ marginBottom: 8, opacity: 0.5 }} />
+              <div>Todavía no agregaste productos</div>
+            </div>
+          )}
           {cart.map((l) => {
             const extras = (l.modifiers || []).reduce((a, m) => a + m.price, 0);
             return (
-              <div key={l.lineId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0F4F3" }}>
+              <div key={l.lineId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F4F3" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</div>
                   {l.modifiers && l.modifiers.length > 0 && (
                     <div style={{ fontSize: 11, color: "#8FA6A4" }}>{l.modifiers.map((m) => m.name).join(", ")}</div>
                   )}
@@ -831,7 +921,7 @@ function VenderTab({
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <IconBtn onClick={() => changeQty(l.lineId, -1)}><Minus size={13} /></IconBtn>
-                  <span style={{ fontSize: 13.5, minWidth: 18, textAlign: "center", fontWeight: 600 }}>{l.qty}</span>
+                  <span style={{ fontSize: 13.5, minWidth: 18, textAlign: "center", fontWeight: 700 }}>{l.qty}</span>
                   <IconBtn onClick={() => changeQty(l.lineId, 1)}><Plus size={13} /></IconBtn>
                   <IconBtn onClick={() => removeLine(l.lineId)} danger><Trash2 size={13} /></IconBtn>
                 </div>
@@ -839,60 +929,64 @@ function VenderTab({
             );
           })}
 
-          <button onClick={() => setShowDiscount((v) => !v)} style={{
-            display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#1B4F9C",
-            fontSize: 12.5, fontWeight: 600, padding: "10px 0 2px",
-          }}>
-            <Percent size={13} /> {discount.value > 0 ? "Editar descuento" : "Agregar descuento"}
-          </button>
-          {showDiscount && (
-            <div style={{ display: "flex", gap: 6, margin: "6px 0 4px" }}>
-              <select value={discount.type} onChange={(e) => setDiscount({ ...discount, type: e.target.value })} style={{ ...inputStyle, width: 90 }}>
-                <option value="pct">%</option>
-                <option value="fixed">$</option>
-              </select>
-              <input type="number" min="0" step={discount.type === "pct" ? "1" : "0.01"} value={discount.value || ""} onChange={(e) => setDiscount({ ...discount, value: parseFloat(e.target.value) || 0 })} placeholder="0" style={inputStyle} />
-            </div>
+          {cart.length > 0 && (
+            <>
+              <button onClick={() => setShowDiscount((v) => !v)} style={{
+                display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#1B4F9C",
+                fontSize: 12.5, fontWeight: 700, padding: "10px 0 2px",
+              }}>
+                <Percent size={13} /> {discount.value > 0 ? "Editar descuento" : "Agregar descuento"}
+              </button>
+              {showDiscount && (
+                <div style={{ display: "flex", gap: 6, margin: "6px 0 4px" }}>
+                  <select value={discount.type} onChange={(e) => setDiscount({ ...discount, type: e.target.value })} style={{ ...inputStyle, width: 90 }}>
+                    <option value="pct">%</option>
+                    <option value="fixed">$</option>
+                  </select>
+                  <input type="number" min="0" step={discount.type === "pct" ? "1" : "0.01"} value={discount.value || ""} onChange={(e) => setDiscount({ ...discount, value: parseFloat(e.target.value) || 0 })} placeholder="0" style={inputStyle} />
+                </div>
+              )}
+
+              <div style={{ margin: "12px 0", padding: "12px", background: "#F6F9FE", borderRadius: 12 }}>
+                {cartTotals.discountAmount > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#8FA6A4", marginBottom: 3 }}>
+                    <span>Subtotal</span><span>${fmt(cartTotals.subtotal)}</span>
+                  </div>
+                )}
+                {cartTotals.discountAmount > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#D97706", marginBottom: 3 }}>
+                    <span>Descuento</span><span>-${fmt(cartTotals.discountAmount)}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontSize: 14, color: "#5C7A78", fontWeight: 600 }}>TOTAL</span>
+                  <span style={{ fontSize: 28, fontWeight: 800, color: "#1B4F9C" }}>${fmt(cartTotals.total)}</span>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+                {Object.keys(methodLabel).map((m) => {
+                  const Icon = methodIcon[m];
+                  const active = payMethod === m;
+                  return (
+                    <button key={m} onClick={() => setPayMethod(m)} style={{
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "10px 6px",
+                      borderRadius: 10, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5",
+                      background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5C7A78", fontWeight: active ? 700 : 500,
+                    }}>
+                      <Icon size={13} /> {methodLabel[m]}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button onClick={cobrar} style={{ width: "100%", padding: 15, borderRadius: 12, border: "none", background: "#1B4F9C", color: "#fff", fontSize: 16, fontWeight: 800 }}>
+                Cobrar ${fmt(cartTotals.total)}
+              </button>
+            </>
           )}
-
-          <div style={{ margin: "10px 0" }}>
-            {cartTotals.discountAmount > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#8FA6A4", marginBottom: 3 }}>
-                <span>Subtotal</span><span>${fmt(cartTotals.subtotal)}</span>
-              </div>
-            )}
-            {cartTotals.discountAmount > 0 && (
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#D97706", marginBottom: 3 }}>
-                <span>Descuento</span><span>-${fmt(cartTotals.discountAmount)}</span>
-              </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span style={{ fontSize: 13.5, color: "#5C7A78" }}>Total</span>
-              <span style={{ fontSize: 22, fontWeight: 700 }}>${fmt(cartTotals.total)}</span>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            {Object.keys(methodLabel).map((m) => {
-              const Icon = methodIcon[m];
-              const active = payMethod === m;
-              return (
-                <button key={m} onClick={() => setPayMethod(m)} style={{
-                  flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 6px",
-                  borderRadius: 9, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DCE7E5",
-                  background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5C7A78", fontWeight: active ? 700 : 500,
-                }}>
-                  <Icon size={13} /> {methodLabel[m]}
-                </button>
-              );
-            })}
-          </div>
-
-          <button onClick={cobrar} style={{ width: "100%", padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontSize: 15, fontWeight: 700 }}>
-            Cobrar ${fmt(cartTotals.total)}
-          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -918,18 +1012,22 @@ function IconBtn({ onClick, children, danger }) {
 
 // ---------------- Artículos ----------------
 
-function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos }) {
+function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos, onDuplicate, onSumarStock, onEditarPrecio }) {
   const [section, setSection] = useState("productos");
   const [search, setSearch] = useState("");
+  const [onlyPending, setOnlyPending] = useState(false);
   const lowStock = products.filter((p) => p.stock <= LOW_STOCK).length;
+  const isPending = (p) => !p.price || p.price === 0 || !p.cost || p.cost === 0;
+  const pendingCount = products.filter(isPending).length;
   const catName = (id) => categories.find((c) => c.id === id)?.name;
   const margin = (p) => (p.cost && p.cost > 0 ? ((p.price - p.cost) / p.cost) * 100 : null);
 
   const filteredProducts = products
     .filter((p) => {
       const q = search.trim().toLowerCase();
-      if (!q) return true;
-      return (p.name + " " + (catName(p.categoryId) || "") + " " + (p.barcode || "")).toLowerCase().includes(q);
+      if (q && !(p.name + " " + (catName(p.categoryId) || "") + " " + (p.barcode || "")).toLowerCase().includes(q)) return false;
+      if (onlyPending && !isPending(p)) return false;
+      return true;
     })
     .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
 
@@ -946,6 +1044,21 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
             <MetricCard label="Productos" value={products.length} />
             <MetricCard label="Stock bajo" value={lowStock} warn={lowStock > 0} />
           </div>
+          {pendingCount > 0 && (
+            <button
+              onClick={() => setOnlyPending((v) => !v)}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 10, marginBottom: 14, display: "flex", alignItems: "center", gap: 8,
+                border: onlyPending ? "1.5px solid #D97706" : "1px solid #FBE3B8", background: onlyPending ? "#FDF0DC" : "#FFFBF2",
+              }}
+            >
+              <CircleAlert size={16} style={{ color: "#D97706", flexShrink: 0 }} />
+              <span style={{ fontSize: 12.5, color: "#92600B", fontWeight: 600, textAlign: "left", flex: 1 }}>
+                {pendingCount} producto{pendingCount !== 1 ? "s" : ""} sin precio o costo cargado
+              </span>
+              <span style={{ fontSize: 11.5, color: "#D97706", fontWeight: 700 }}>{onlyPending ? "Ver todos" : "Ver"}</span>
+            </button>
+          )}
           <button onClick={openNewProduct} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1.5px dashed #1B4F9C", background: "#fff", color: "#1B4F9C", fontWeight: 700, fontSize: 14, marginBottom: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Plus size={16} /> Agregar producto
           </button>
@@ -976,8 +1089,14 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
             )}
           </div>
 
+          {onlyPending && (
+            <button onClick={() => setOnlyPending(false)} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", color: "#1B4F9C", fontSize: 12, fontWeight: 600, padding: "0 0 10px" }}>
+              <X size={13} /> Quitar filtro de pendientes
+            </button>
+          )}
+
           {products.length === 0 && <EmptyState text="Todavía no cargaste productos. Agregá el primero o importá un Excel." />}
-          {products.length > 0 && filteredProducts.length === 0 && <EmptyState text="No hay productos que coincidan con la búsqueda." />}
+          {products.length > 0 && filteredProducts.length === 0 && <EmptyState text="No hay productos que coincidan." />}
           <div style={{ fontSize: 11.5, color: "#8FA6A4", marginBottom: 6 }}>
             {filteredProducts.length} producto{filteredProducts.length !== 1 ? "s" : ""} · orden alfabético
           </div>
@@ -985,26 +1104,45 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
             {filteredProducts.map((p) => {
               const low = p.stock <= LOW_STOCK;
               const m = margin(p);
+              const pending = isPending(p);
               return (
-                <div key={p.id} style={{ background: "#fff", border: "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{p.name}</div>
-                    <div style={{ fontSize: 12, color: "#8FA6A4" }}>
-                      {catName(p.categoryId) ? catName(p.categoryId) + " · " : ""}${fmt(p.price)}
-                      {p.modifiers && p.modifiers.length > 0 ? ` · ${p.modifiers.length} modificador${p.modifiers.length > 1 ? "es" : ""}` : ""}
-                    </div>
-                    {m !== null && (
-                      <div style={{ fontSize: 11, color: "#1B4F9C", display: "flex", alignItems: "center", gap: 3, marginTop: 2 }}>
-                        <TrendingUp size={11} /> Margen {m.toFixed(0)}% (costo ${fmt(p.cost)})
+                <div key={p.id} style={{ background: "#fff", border: pending ? "1px solid #FBE3B8" : "1px solid #E3ECEA", borderRadius: 12, padding: "10px 12px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 12, color: "#8FA6A4" }}>
+                        {catName(p.categoryId) ? catName(p.categoryId) + " · " : ""}${fmt(p.price)}
+                        {p.modifiers && p.modifiers.length > 0 ? ` · ${p.modifiers.length} modificador${p.modifiers.length > 1 ? "es" : ""}` : ""}
                       </div>
-                    )}
+                      {m !== null && (
+                        <div style={{ fontSize: 11, color: "#1B4F9C", display: "flex", alignItems: "center", gap: 3, marginTop: 2 }}>
+                          <TrendingUp size={11} /> Margen {m.toFixed(0)}% (costo ${fmt(p.cost)})
+                        </div>
+                      )}
+                      {pending && (
+                        <div style={{ fontSize: 11, color: "#D97706", display: "flex", alignItems: "center", gap: 3, marginTop: 2, fontWeight: 600 }}>
+                          <CircleAlert size={11} /> Falta {!p.price ? "precio" : ""}{!p.price && !p.cost ? " y " : ""}{!p.cost ? "costo" : ""}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, padding: "4px 9px", borderRadius: 20, background: low ? "#FDF0DC" : "#E4ECFB", color: low ? "#D97706" : "#1B4F9C", display: "flex", alignItems: "center", gap: 4 }}>
+                      {low && <AlertTriangle size={12} />} {p.stock}
+                    </div>
+                    <IconBtn onClick={() => onPrintLabel(p)}><Tag size={13} /></IconBtn>
+                    <IconBtn onClick={() => openEditProduct(p)}><Pencil size={13} /></IconBtn>
+                    <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${p.name}"?`)) deleteProduct(p.id); }}><Trash2 size={13} /></IconBtn>
                   </div>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, padding: "4px 9px", borderRadius: 20, background: low ? "#FDF0DC" : "#E4ECFB", color: low ? "#D97706" : "#1B4F9C", display: "flex", alignItems: "center", gap: 4 }}>
-                    {low && <AlertTriangle size={12} />} {p.stock}
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, paddingTop: 8, borderTop: "1px solid #F0F4F3" }}>
+                    <button onClick={() => onSumarStock(p)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "6px 4px", borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontSize: 11.5, fontWeight: 600 }}>
+                      <PackagePlus size={12} /> Sumar stock
+                    </button>
+                    <button onClick={() => onEditarPrecio(p)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "6px 4px", borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontSize: 11.5, fontWeight: 600 }}>
+                      <DollarSign size={12} /> Editar precio
+                    </button>
+                    <button onClick={() => onDuplicate(p)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "6px 4px", borderRadius: 8, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontSize: 11.5, fontWeight: 600 }}>
+                      <Copy size={12} /> Duplicar
+                    </button>
                   </div>
-                  <IconBtn onClick={() => onPrintLabel(p)}><Tag size={13} /></IconBtn>
-                  <IconBtn onClick={() => openEditProduct(p)}><Pencil size={13} /></IconBtn>
-                  <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${p.name}"?`)) deleteProduct(p.id); }}><Trash2 size={13} /></IconBtn>
                 </div>
               );
             })}
@@ -1420,6 +1558,7 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
   const isEdit = !!form.id;
   const [newCatMode, setNewCatMode] = useState(false);
   const [newCatName, setNewCatName] = useState("");
+  const [margenDeseado, setMargenDeseado] = useState("40");
   const addModifier = () => setForm({ ...form, modifiers: [...(form.modifiers || []), { name: "", price: "" }] });
   const updateModifier = (idx, key, val) => {
     const mods = [...form.modifiers];
@@ -1428,11 +1567,15 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
   };
   const removeModifier = (idx) => setForm({ ...form, modifiers: form.modifiers.filter((_, i) => i !== idx) });
 
-  const handleSave = () => {
+  const cost = parseFloat(form.cost);
+  const margen = parseFloat(margenDeseado);
+  const precioSugerido = !isNaN(cost) && cost > 0 && !isNaN(margen) ? cost * (1 + margen / 100) : null;
+
+  const handleSave = (keepOpen) => {
     const cleanMods = (form.modifiers || [])
       .map((m) => ({ name: (m.name || "").trim(), price: parseFloat(m.price) || 0 }))
       .filter((m) => m.name);
-    onSave({ ...form, modifiers: cleanMods });
+    onSave({ ...form, modifiers: cleanMods }, keepOpen);
   };
 
   const confirmNewCategory = () => {
@@ -1483,6 +1626,22 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
         <Field label="Precio de venta" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
         <Field label="Precio de compra (costo, opcional)" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.cost || ""} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
       </div>
+      {cost > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#F6F9FE", border: "1px solid #E4ECFB", borderRadius: 10, padding: "8px 10px", marginBottom: 12, marginTop: -4 }}>
+          <DollarSign size={14} style={{ color: "#1B4F9C", flexShrink: 0 }} />
+          <span style={{ fontSize: 12, color: "#5C7A78" }}>Margen deseado</span>
+          <input type="number" min="0" value={margenDeseado} onChange={(e) => setMargenDeseado(e.target.value)} style={{ ...inputStyle, width: 56, padding: "5px 6px", fontSize: 12.5 }} />
+          <span style={{ fontSize: 12, color: "#5C7A78" }}>%</span>
+          {precioSugerido !== null && (
+            <button
+              onClick={() => setForm({ ...form, price: precioSugerido.toFixed(2) })}
+              style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: "#1B4F9C", background: "#E4ECFB", border: "none", borderRadius: 8, padding: "6px 10px", whiteSpace: "nowrap" }}
+            >
+              Usar ${fmt(precioSugerido)}
+            </button>
+          )}
+        </div>
+      )}
       <Field label="Stock"><input type="number" min="0" step="1" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" style={inputStyle} /></Field>
 
       <Field label="Modificadores (opcionales — ej: tamaño, sabor)">
@@ -1498,9 +1657,14 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
         </button>
       </Field>
 
-      <button onClick={handleSave} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>
+      <button onClick={() => handleSave(false)} style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}>
         {isEdit ? "Guardar cambios" : "Agregar producto"}
       </button>
+      {!isEdit && (
+        <button onClick={() => handleSave(true)} style={{ width: "100%", marginTop: 8, padding: 12, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#1B4F9C", fontWeight: 700, fontSize: 13.5, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          <PackagePlus size={15} /> Guardar y cargar otro
+        </button>
+      )}
     </Overlay>
   );
 }
@@ -1640,6 +1804,57 @@ function BarcodeSVG({ value, height = 40 }) {
     }
   }, [value, height]);
   return <svg ref={ref} />;
+}
+
+function StockAdjustModal({ product, onConfirm, onClose }) {
+  const [amount, setAmount] = useState("");
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>Sumar stock · {product.name}</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+      </div>
+      <div style={{ fontSize: 12.5, color: "#8FA6A4", marginBottom: 10 }}>Stock actual: {product.stock}</div>
+      <Field label="Cantidad a sumar">
+        <input
+          autoFocus type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && onConfirm(parseInt(amount, 10))}
+          placeholder="0" style={inputStyle}
+        />
+      </Field>
+      <button
+        onClick={() => onConfirm(parseInt(amount, 10))}
+        style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}
+      >
+        Sumar al stock
+      </button>
+    </Overlay>
+  );
+}
+
+function PriceEditModal({ product, onConfirm, onClose }) {
+  const [price, setPrice] = useState(String(product.price || ""));
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>Editar precio · {product.name}</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8FA6A4" }}><X size={20} /></button>
+      </div>
+      <Field label="Precio de venta">
+        <input
+          autoFocus type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && onConfirm(parseFloat(price))}
+          placeholder="0.00" style={inputStyle}
+        />
+      </Field>
+      <button
+        onClick={() => onConfirm(parseFloat(price))}
+        style={{ width: "100%", marginTop: 8, padding: 13, borderRadius: 10, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 14.5 }}
+      >
+        Guardar precio
+      </button>
+    </Overlay>
+  );
 }
 
 function LabelModal({ product, onClose }) {
