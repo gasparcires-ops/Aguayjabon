@@ -461,6 +461,15 @@ export default function PuntoDeVenta() {
     saveCategories(categories.filter((c) => c.id !== id));
     saveProducts(products.map((p) => (p.categoryId === id ? { ...p, categoryId: "" } : p)));
   };
+  const quickCreateCategory = (name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return null;
+    const existing = categories.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
+    if (existing) return existing.id;
+    const cat = { id: uid(), name: trimmed };
+    saveCategories([...categories, cat]);
+    return cat.id;
+  };
 
   const saveEmployee = () => {
     const name = employeeForm.name.trim();
@@ -664,7 +673,7 @@ export default function PuntoDeVenta() {
         )}
       </div>
 
-      {productForm && <ProductFormModal form={productForm} setForm={setProductForm} categories={categories} onSave={saveProduct} onClose={() => setProductForm(null)} />}
+      {productForm && <ProductFormModal form={productForm} setForm={setProductForm} categories={categories} onSave={saveProduct} onClose={() => setProductForm(null)} onCreateCategory={quickCreateCategory} />}
       {categoryForm && <CategoryFormModal form={categoryForm} setForm={setCategoryForm} onSave={saveCategory} onClose={() => setCategoryForm(null)} />}
       {employeeForm && <EmployeeFormModal form={employeeForm} setForm={setEmployeeForm} onSave={saveEmployee} onClose={() => setEmployeeForm(null)} />}
       {accountForm && <AccountFormModal form={accountForm} setForm={setAccountForm} onSave={saveAccountUser} onClose={() => setAccountForm(null)} />}
@@ -911,9 +920,18 @@ function IconBtn({ onClick, children, danger }) {
 
 function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos }) {
   const [section, setSection] = useState("productos");
+  const [search, setSearch] = useState("");
   const lowStock = products.filter((p) => p.stock <= LOW_STOCK).length;
   const catName = (id) => categories.find((c) => c.id === id)?.name;
   const margin = (p) => (p.cost && p.cost > 0 ? ((p.price - p.cost) / p.cost) * 100 : null);
+
+  const filteredProducts = products
+    .filter((p) => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return (p.name + " " + (catName(p.categoryId) || "") + " " + (p.barcode || "")).toLowerCase().includes(q);
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
 
   return (
     <div>
@@ -943,9 +961,28 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
           <button onClick={onGenerarCodigos} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #DCE7E5", background: "#fff", color: "#5C7A78", fontWeight: 600, fontSize: 12, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <Wand2 size={13} /> Generar códigos de barras faltantes
           </button>
+
+          <div style={{ position: "relative", marginBottom: 14 }}>
+            <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: "#8FA6A4" }} />
+            <input
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por nombre, categoría o código de barras..."
+              style={{ ...inputStyle, padding: "10px 12px 10px 34px" }}
+            />
+            {search && (
+              <button onClick={() => setSearch("")} style={{ position: "absolute", right: 8, top: 7, border: "none", background: "none", color: "#8FA6A4", padding: 4 }}>
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
           {products.length === 0 && <EmptyState text="Todavía no cargaste productos. Agregá el primero o importá un Excel." />}
+          {products.length > 0 && filteredProducts.length === 0 && <EmptyState text="No hay productos que coincidan con la búsqueda." />}
+          <div style={{ fontSize: 11.5, color: "#8FA6A4", marginBottom: 6 }}>
+            {filteredProducts.length} producto{filteredProducts.length !== 1 ? "s" : ""} · orden alfabético
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {products.map((p) => {
+            {filteredProducts.map((p) => {
               const low = p.stock <= LOW_STOCK;
               const m = margin(p);
               return (
@@ -1379,8 +1416,10 @@ function AccountFormModal({ form, setForm, onSave, onClose }) {
 
 // ---------------- Modales ----------------
 
-function ProductFormModal({ form, setForm, categories, onSave, onClose }) {
+function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreateCategory }) {
   const isEdit = !!form.id;
+  const [newCatMode, setNewCatMode] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
   const addModifier = () => setForm({ ...form, modifiers: [...(form.modifiers || []), { name: "", price: "" }] });
   const updateModifier = (idx, key, val) => {
     const mods = [...form.modifiers];
@@ -1396,6 +1435,13 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose }) {
     onSave({ ...form, modifiers: cleanMods });
   };
 
+  const confirmNewCategory = () => {
+    const id = onCreateCategory(newCatName);
+    if (id) setForm({ ...form, categoryId: id });
+    setNewCatName("");
+    setNewCatMode(false);
+  };
+
   return (
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -1408,10 +1454,30 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose }) {
         <input value={form.barcode || ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} placeholder="Escaneá el producto con la pistola acá" style={inputStyle} />
       </Field>
       <Field label="Categoría">
-        <select value={form.categoryId || ""} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} style={inputStyle}>
-          <option value="">Sin categoría</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        {!newCatMode ? (
+          <select
+            value={form.categoryId || ""}
+            onChange={(e) => {
+              if (e.target.value === "__new__") { setNewCatMode(true); return; }
+              setForm({ ...form, categoryId: e.target.value });
+            }}
+            style={inputStyle}
+          >
+            <option value="">Sin categoría</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value="__new__">+ Crear categoría nueva...</option>
+          </select>
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              autoFocus value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && confirmNewCategory()}
+              placeholder="Nombre de la nueva categoría" style={{ ...inputStyle, flex: 1 }}
+            />
+            <button onClick={confirmNewCategory} style={{ padding: "0 14px", borderRadius: 9, border: "none", background: "#1B4F9C", color: "#fff", fontWeight: 700, fontSize: 13 }}>Crear</button>
+            <IconBtn onClick={() => { setNewCatMode(false); setNewCatName(""); }}><X size={13} /></IconBtn>
+          </div>
+        )}
       </Field>
       <div style={{ display: "flex", gap: 10 }}>
         <Field label="Precio de venta" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
