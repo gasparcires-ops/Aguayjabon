@@ -40,7 +40,7 @@ export default function PuntoDeVenta() {
   const [pinInput, setPinInput] = useState("");
   const [loginError, setLoginError] = useState("");
 
-  const [tab, setTab] = useState("vender");
+  const [tab, setTab] = useState("inicio");
   const [cart, setCart] = useState([]); // {lineId, productId, name, price, modifiers:[{name,price}], qty}
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("all");
@@ -581,6 +581,11 @@ export default function PuntoDeVenta() {
     );
   }
 
+  const soldToday = sales
+    .filter((s) => new Date(s.date).toDateString() === new Date().toDateString())
+    .reduce((a, s) => a + s.total, 0);
+  const pendingProductsCount = products.filter((p) => !p.price || p.price === 0 || !p.cost || p.cost === 0).length;
+
   return (
     <div style={{ minHeight: "100%", background: "#F2F6FB", fontFamily: sans, color: "#10243D" }}>
       <style>{`
@@ -589,11 +594,20 @@ export default function PuntoDeVenta() {
         .vender-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; }
         .vender-layout { display: block; }
         .vender-cart { margin-top: 4px; }
+        .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+        .sidebar { background: ${C.azulOscuro}; color: #fff; flex-shrink: 0; }
+        .sidebar-nav-primary { display: flex; flex-direction: row; overflow-x: auto; gap: 4px; padding: 8px 10px; }
+        .sidebar-nav-secondary { display: flex; flex-direction: row; overflow-x: auto; gap: 4px; padding: 0 10px 10px; }
+        .app-main { flex: 1; min-width: 0; }
         @media (min-width: 900px) {
           .vender-layout { display: flex; align-items: flex-start; gap: 20px; }
           .vender-products { flex: 1; min-width: 0; }
           .vender-cart { width: 360px; flex-shrink: 0; position: sticky; top: 16px; margin-top: 0; }
           .vender-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+          .app-shell { flex-direction: row; }
+          .sidebar { width: 268px; min-height: 100vh; position: sticky; top: 0; align-self: flex-start; display: flex; flex-direction: column; }
+          .sidebar-nav-primary { flex-direction: column; overflow-x: visible; padding: 10px 14px; gap: 3px; }
+          .sidebar-nav-secondary { flex-direction: column; overflow-x: visible; padding: 4px 14px 14px; gap: 2px; margin-top: auto; }
         }
         @media print {
           body * { visibility: hidden; }
@@ -606,74 +620,108 @@ export default function PuntoDeVenta() {
         }
       `}</style>
 
-      <div style={{ background: "#fff", padding: "18px 16px 0", color: "#10243D", borderBottom: "1px solid #E1EAF4" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 1180, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <img src="/logo.jpg" alt="Agua y Jabón" style={{ width: 76, height: 76, objectFit: "contain", borderRadius: 14 }} />
-            <div>
-              <div style={{ fontSize: 27, fontWeight: 900, letterSpacing: -0.3, color: C.azulOscuro }}>Agua y Jabón</div>
-              {activeEmployee ? (
-                <div style={{ display: "inline-block", background: C.azulSuave, color: C.azul, borderRadius: 999, padding: "5px 12px", fontSize: 14.5, fontWeight: 700, marginTop: 4 }}>
-                  Atiende: {activeEmployee.name}
-                </div>
-              ) : (
-                <div style={{ fontSize: 14, color: C.textoSuave, marginTop: 3 }}>Stock, ventas y comprobantes</div>
-              )}
+      <div className="app-shell">
+        <div className="sidebar">
+          <button onClick={() => setTab("inicio")} style={{ background: "none", border: "none", textAlign: "left", padding: "20px 14px 14px", cursor: "pointer" }}>
+            <div style={{ width: 64, height: 64, background: "#fff", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+              <img src="/logo.jpg" alt="Agua y Jabón" style={{ width: 52, height: 52, objectFit: "contain", borderRadius: 8 }} />
             </div>
+            <div style={{ fontSize: 19, fontWeight: 900, color: "#fff" }}>Agua y Jabón</div>
+            {activeEmployee && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 999, padding: "4px 10px", fontSize: 12.5, fontWeight: 700, marginTop: 6 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ADE80" }} /> Atiende: {activeEmployee.name}
+              </div>
+            )}
+          </button>
+
+          <div className="sidebar-nav-primary">
+            {[
+              { id: "vender", label: "Vender", icon: ShoppingCart },
+              { id: "articulos", label: "Productos", icon: Package },
+              { id: "caja", label: "Caja del día", icon: Banknote },
+              { id: "resumen", label: "Cómo vamos", icon: BarChart3 },
+            ].map((t) => {
+              const Icon = t.icon;
+              const active = tab === t.id;
+              return (
+                <button key={t.id} onClick={() => setTab(t.id)} style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 11, border: "none",
+                  background: active ? "rgba(255,255,255,0.14)" : "transparent", color: "#fff", fontWeight: active ? 800 : 600,
+                  fontSize: 15.5, whiteSpace: "nowrap", width: "100%", textAlign: "left",
+                }}>
+                  <Icon size={18} /> {t.label}
+                </button>
+              );
+            })}
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={exportBackup} title="Exportar copia de seguridad" style={btn("secundario", "sm")}>
+
+          <div className="sidebar-nav-secondary">
+            {[
+              { id: "historial", label: "Historial", icon: Receipt },
+              { id: "equipo", label: "Equipo", icon: Users },
+              { id: "avisos", label: "Avisos", icon: MessageSquare },
+              { id: "accesos", label: "Accesos", icon: Lock },
+            ].map((t) => {
+              const Icon = t.icon;
+              const active = tab === t.id;
+              return (
+                <button key={t.id} onClick={() => setTab(t.id)} style={{
+                  display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", borderRadius: 9, border: "none",
+                  background: active ? "rgba(255,255,255,0.14)" : "transparent", color: "rgba(255,255,255,0.75)", fontWeight: active ? 700 : 500,
+                  fontSize: 13.5, whiteSpace: "nowrap", width: "100%", textAlign: "left",
+                }}>
+                  <Icon size={15} /> {t.label}
+                </button>
+              );
+            })}
+            <button onClick={exportBackup} title="Exportar copia de seguridad" style={{
+              display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", borderRadius: 9, border: "none",
+              background: "transparent", color: "rgba(255,255,255,0.75)", fontWeight: 500, fontSize: 13.5, whiteSpace: "nowrap", width: "100%", textAlign: "left",
+            }}>
               <Download size={15} /> Exportar
             </button>
             {employees.length > 0 && (
-              <button onClick={() => setActiveEmployeeId(null)} style={btn("terciario", "sm")}>
+              <button onClick={() => setActiveEmployeeId(null)} style={{
+                display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", borderRadius: 9, border: "none",
+                background: "transparent", color: "rgba(255,255,255,0.75)", fontWeight: 500, fontSize: 13.5, whiteSpace: "nowrap", width: "100%", textAlign: "left",
+              }}>
                 <LogOut size={15} /> Cambiar
               </button>
             )}
-            <button onClick={doLogout} title="Cerrar sesión" style={{ ...btn("terciario", "sm"), color: C.rojo }}>
+            <button onClick={doLogout} title="Cerrar sesión" style={{
+              display: "flex", alignItems: "center", gap: 9, padding: "9px 14px", borderRadius: 9, border: "none",
+              background: "transparent", color: "#FCA5A5", fontWeight: 600, fontSize: 13.5, whiteSpace: "nowrap", width: "100%", textAlign: "left",
+            }}>
               <Lock size={15} /> Salir
             </button>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 2, maxWidth: 1180, margin: "16px auto 0", overflowX: "auto" }}>
-          {[
-            { id: "vender", label: "Vender", icon: ShoppingCart },
-            { id: "articulos", label: "Artículos", icon: Package },
-            { id: "resumen", label: "Resumen", icon: BarChart3 },
-            { id: "historial", label: "Historial", icon: Receipt },
-            { id: "equipo", label: "Equipo", icon: Users },
-            { id: "caja", label: "Caja", icon: Banknote },
-            { id: "avisos", label: "Avisos", icon: MessageSquare },
-            { id: "accesos", label: "Accesos", icon: Lock },
-          ].map((t) => {
-            const Icon = t.icon;
-            const active = tab === t.id;
-            return (
-              <button key={t.id} onClick={() => setTab(t.id)} style={{
-                flex: "1 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                padding: "16px 18px", border: "none", borderBottom: active ? `4px solid ${C.azul}` : "4px solid transparent",
-                background: "transparent", color: active ? C.azul : C.textoTenue, fontWeight: active ? 800 : 600, fontSize: 16.5, whiteSpace: "nowrap",
-              }}>
-                <Icon size={17} /> {t.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: 16 }}>
-        {saveError && <div style={{ background: "#FDECEC", color: "#B3261E", padding: "8px 12px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{saveError}</div>}
+        <div className="app-main">
+          <div style={{ maxWidth: 1180, margin: "0 auto", padding: 16 }}>
+            {saveError && <div style={{ background: "#FDECEC", color: "#B3261E", padding: "8px 12px", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>{saveError}</div>}
 
-        {tab === "vender" && (
-          <VenderTab
-            products={filteredProducts} categories={categories} search={search} setSearch={setSearch}
-            catFilter={catFilter} setCatFilter={setCatFilter} cart={cart} cartTotals={cartTotals}
-            onProductTap={handleProductTap} changeQty={changeQty} removeLine={removeLine}
-            payMethod={payMethod} setPayMethod={setPayMethod} methodLabel={methodLabel} methodIcon={methodIcon}
-            discount={discount} setDiscount={setDiscount} showDiscount={showDiscount} setShowDiscount={setShowDiscount}
-            cobrar={cobrar} onScan={handleScan} scanMsg={scanMsg}
-          />
-        )}
+            {tab === "inicio" && (
+              <InicioView
+                employeeName={activeEmployee ? activeEmployee.name : account}
+                cajaActual={cajaActual}
+                soldToday={soldToday}
+                productsCount={products.length}
+                pendingCount={pendingProductsCount}
+                setTab={setTab}
+                onCargarProducto={() => { setTab("articulos"); openNewProduct(); }}
+              />
+            )}
+            {tab === "vender" && (
+              <VenderTab
+                products={filteredProducts} categories={categories} search={search} setSearch={setSearch}
+                catFilter={catFilter} setCatFilter={setCatFilter} cart={cart} cartTotals={cartTotals}
+                onProductTap={handleProductTap} changeQty={changeQty} removeLine={removeLine}
+                payMethod={payMethod} setPayMethod={setPayMethod} methodLabel={methodLabel} methodIcon={methodIcon}
+                discount={discount} setDiscount={setDiscount} showDiscount={showDiscount} setShowDiscount={setShowDiscount}
+                cobrar={cobrar} onScan={handleScan} scanMsg={scanMsg}
+              />
+            )}
         {tab === "articulos" && (
           <ArticulosTab
             products={products} categories={categories}
@@ -708,6 +756,8 @@ export default function PuntoDeVenta() {
             onDelete={deleteAccountUser}
           />
         )}
+          </div>
+        </div>
       </div>
 
       {productForm && <ProductFormModal form={productForm} setForm={setProductForm} categories={categories} onSave={saveProduct} onClose={() => setProductForm(null)} onCreateCategory={quickCreateCategory} />}
@@ -820,6 +870,79 @@ function LoginScreen({ employees, onPick, pickId, pinInput, setPinInput, onConfi
 }
 
 // ---------------- Vender ----------------
+
+// ---------------- Inicio ----------------
+
+function saludoSegunHora() {
+  const h = new Date().getHours();
+  if (h < 12) return "Buen día";
+  if (h < 20) return "Buenas tardes";
+  return "Buenas noches";
+}
+
+function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendingCount, setTab, onCargarProducto }) {
+  const fecha = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+  const fechaCap = fecha.charAt(0).toUpperCase() + fecha.slice(1);
+
+  const tareas = [
+    { title: "Cobrar una venta", desc: "Escaneá o buscá el producto por nombre", icon: ScanBarcode, onClick: () => setTab("vender") },
+    { title: "Cargar un producto nuevo", desc: "Nombre, precio y cuánto tenés", icon: Plus, onClick: onCargarProducto },
+    { title: "Sumar stock que llegó", desc: "Buscá el producto y poné cuántos entraron", icon: Package, onClick: () => setTab("articulos") },
+    { title: "Cerrar la caja", desc: "Contá la plata y comparalo con el sistema", icon: Banknote, onClick: () => setTab("caja") },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
+        <div>
+          <div style={{ fontSize: 25, fontWeight: 900, color: C.texto }}>{saludoSegunHora()}{employeeName ? `, ${employeeName}` : ""}</div>
+          <div style={{ fontSize: 14, color: C.textoSuave, marginTop: 3 }}>
+            {fechaCap}{cajaActual ? ` · La caja está abierta desde las ${new Date(cajaActual.openedAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}` : " · La caja está cerrada"}
+          </div>
+        </div>
+        <button onClick={() => setTab("vender")} style={btn("primario", "lg")}>
+          <ShoppingCart size={18} /> Cobrar la venta
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
+        <div style={card()}>
+          <div style={{ fontSize: 13, color: C.textoSuave, fontWeight: 600, marginBottom: 6 }}>Vendido hoy</div>
+          <div style={{ fontSize: 26, fontWeight: 900, color: C.texto }}>${fmt(soldToday)}</div>
+          <div style={{ fontSize: 12, color: C.textoTenue, marginTop: 4 }}>{soldToday === 0 ? "Todavía no cobraste ninguna venta" : "Actualizado ahora"}</div>
+        </div>
+        <div style={card()}>
+          <div style={{ fontSize: 13, color: C.textoSuave, fontWeight: 600, marginBottom: 6 }}>Productos cargados</div>
+          <div style={{ fontSize: 26, fontWeight: 900, color: C.texto }}>{productsCount}</div>
+          <div style={{ fontSize: 12, color: C.textoTenue, marginTop: 4 }}>Ordenados por nombre</div>
+        </div>
+        <div style={{ ...card(), background: pendingCount > 0 ? C.ambarSuave : "#fff", border: pendingCount > 0 ? `1.5px solid ${C.ambarBorde}` : card().border }}>
+          <div style={{ fontSize: 13, color: pendingCount > 0 ? C.ambar : C.textoSuave, fontWeight: 600, marginBottom: 6 }}>Necesitan atención</div>
+          <div style={{ fontSize: 26, fontWeight: 900, color: pendingCount > 0 ? C.ambar : C.texto }}>{pendingCount}</div>
+          <div style={{ fontSize: 12, color: pendingCount > 0 ? "#8A5A0A" : C.textoTenue, marginTop: 4 }}>Poco stock o sin precio</div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 13, fontWeight: 800, color: C.textoSuave, letterSpacing: 0.4, marginBottom: 10 }}>¿QUÉ QUERÉS HACER?</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+        {tareas.map((t) => {
+          const Icon = t.icon;
+          return (
+            <button key={t.title} onClick={t.onClick} style={{ ...card(), display: "flex", alignItems: "center", gap: 14, textAlign: "left", cursor: "pointer" }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: C.azulSuave, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Icon size={20} style={{ color: C.azul }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 15.5, fontWeight: 800, color: C.texto }}>{t.title}</div>
+                <div style={{ fontSize: 12.5, color: C.textoSuave, marginTop: 2 }}>{t.desc}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function VenderTab({
   products, categories, search, setSearch, catFilter, setCatFilter, cart, cartTotals,
