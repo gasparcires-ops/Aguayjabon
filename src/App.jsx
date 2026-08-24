@@ -1009,10 +1009,10 @@ function VenderTab({
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: C.azulSuave, borderRadius: 11, padding: "4px 6px" }}>
                       <button onClick={() => changeQty(line.lineId, -1)} style={{ ...iconBtn("secundario"), width: 34, height: 34, background: "#fff" }}><Minus size={15} /></button>
                       <span style={{ fontSize: 16, fontWeight: 800, minWidth: 20, textAlign: "center", color: C.azul }}>{qty}</span>
-                      <button onClick={() => onProductTap(p)} disabled={outOfStock} style={{ ...iconBtn("primario"), width: 34, height: 34 }}><Plus size={15} /></button>
+                      <button onClick={() => onProductTap(p)} disabled={outOfStock} style={{ ...iconBtn("primario"), boxShadow: "none", width: 34, height: 34 }}><Plus size={15} /></button>
                     </div>
                   ) : (
-                    <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ ...btn(outOfStock ? "secundario" : "primario", "sm"), width: "100%", opacity: outOfStock ? 0.5 : 1 }}>
+                    <button onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock} style={{ ...btn(outOfStock ? "secundario" : "primario", "sm"), boxShadow: "none", width: "100%", opacity: outOfStock ? 0.5 : 1 }}>
                       <Plus size={15} /> Agregar
                     </button>
                   )
@@ -1244,7 +1244,7 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
                   <div style={{ fontSize: 19, fontWeight: 900, color: p.price ? "#1B4F9C" : "#B7C3D4", minWidth: 90 }}>${fmt(p.price)}</div>
                   <span style={badgeStock(p.stock, LOW_STOCK).estilo}>{badgeStock(p.stock, LOW_STOCK).texto}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <button onClick={() => onEditarPrecio(p)} style={btn(pending ? "primario" : "secundario", "sm")}>
+                    <button onClick={() => onEditarPrecio(p)} style={{ ...btn(pending ? "primario" : "secundario", "sm"), boxShadow: "none" }}>
                       <DollarSign size={13} /> {pending ? "Poner precio" : "Editar precio"}
                     </button>
                     <button onClick={() => onSumarStock(p)} style={btn("secundario", "sm")}>
