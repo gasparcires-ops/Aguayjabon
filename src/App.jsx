@@ -61,6 +61,7 @@ export default function PuntoDeVenta() {
   const [cajaHistorial, setCajaHistorial] = useState([]);
   const [observaciones, setObservaciones] = useState([]);
   const [labelProduct, setLabelProduct] = useState(null);
+  const [sheetLabelOpen, setSheetLabelOpen] = useState(false);
   const [stockAdjustProduct, setStockAdjustProduct] = useState(null);
   const [priceEditProduct, setPriceEditProduct] = useState(null);
   const fileInputRef = useRef(null);
@@ -615,6 +616,8 @@ export default function PuntoDeVenta() {
           .receipt-print { position: fixed; top: 0; left: 0; width: 100%; max-width: 320px; margin: 0 auto; border: none !important; }
           .label-print, .label-print * { visibility: visible; }
           .label-print { position: fixed; top: 0; left: 0; width: 100%; }
+          .sheet-print, .sheet-print * { visibility: visible; }
+          .sheet-print { position: fixed; top: 0; left: 0; width: 100%; }
           .no-print { display: none !important; }
           @page { size: 80mm auto; margin: 2mm; }
         }
@@ -733,6 +736,7 @@ export default function PuntoDeVenta() {
             onDuplicate={duplicateProduct}
             onSumarStock={(p) => setStockAdjustProduct(p)}
             onEditarPrecio={(p) => setPriceEditProduct(p)}
+            onPrintSheet={() => setSheetLabelOpen(true)}
           />
         )}
         {tab === "resumen" && (
@@ -774,6 +778,7 @@ export default function PuntoDeVenta() {
       {receipt && <ReceiptModal sale={receipt} methodLabel={methodLabel} onClose={() => setReceipt(null)} />}
       {viewingSale && <ReceiptModal sale={viewingSale} methodLabel={methodLabel} onClose={() => setViewingSale(null)} />}
       {labelProduct && <LabelModal product={labelProduct} onClose={() => setLabelProduct(null)} />}
+      {sheetLabelOpen && <SheetLabelModal products={products} onClose={() => setSheetLabelOpen(false)} />}
       {stockAdjustProduct && (
         <StockAdjustModal
           product={stockAdjustProduct}
@@ -1125,7 +1130,7 @@ function IconBtn({ onClick, children, danger }) {
 
 // ---------------- Artículos ----------------
 
-function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos, onDuplicate, onSumarStock, onEditarPrecio }) {
+function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos, onDuplicate, onSumarStock, onEditarPrecio, onPrintSheet }) {
   const [section, setSection] = useState("productos");
   const [search, setSearch] = useState("");
   const [onlyPending, setOnlyPending] = useState(false);
@@ -1184,8 +1189,11 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
             </button>
             <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={onImportExcel} style={{ display: "none" }} />
           </div>
-          <button onClick={onGenerarCodigos} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 14 }}>
+          <button onClick={onGenerarCodigos} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 8 }}>
             <Wand2 size={14} /> Generar códigos de barras faltantes
+          </button>
+          <button onClick={onPrintSheet} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 14 }}>
+            <Tag size={14} /> Imprimir etiquetas en hoja A4
           </button>
 
           <div style={{ position: "relative", marginBottom: 14 }}>
@@ -1962,6 +1970,91 @@ function PriceEditModal({ product, onConfirm, onClose }) {
       >
         Guardar precio
       </button>
+    </Overlay>
+  );
+}
+
+function SheetLabelModal({ products, onClose }) {
+  const [search, setSearch] = useState("");
+  const [qty, setQty] = useState({});
+
+  const filtered = products
+    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+
+  const setQtyFor = (id, val) => {
+    const n = Math.max(0, parseInt(val, 10) || 0);
+    setQty({ ...qty, [id]: n });
+  };
+
+  const instances = [];
+  products.forEach((p) => {
+    const n = qty[p.id] || 0;
+    for (let i = 0; i < n; i++) instances.push(p);
+  });
+  const totalLabels = instances.length;
+  const sheets = Math.max(1, Math.ceil(totalLabels / 24));
+
+  return (
+    <Overlay onClose={onClose}>
+      <style>{`@media print { @page { size: A4; margin: 10mm; } }`}</style>
+
+      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>Imprimir etiquetas en hoja A4</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
+      </div>
+
+      <div className="no-print" style={{ position: "relative", marginBottom: 10 }}>
+        <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: "#8AA2BC" }} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar producto..." style={{ ...inputStyle, padding: "10px 12px 10px 34px" }} />
+      </div>
+
+      <div className="no-print" style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #E1EAF4", borderRadius: 10, marginBottom: 12 }}>
+        {filtered.length === 0 && <div style={{ padding: 14, fontSize: 13, color: "#8AA2BC", textAlign: "center" }}>No hay productos que coincidan.</div>}
+        {filtered.map((p) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderBottom: "1px solid #EDF2F8" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+              <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>${fmt(p.price)}</div>
+            </div>
+            <input
+              type="number" min="0" value={qty[p.id] || ""} onChange={(e) => setQtyFor(p.id, e.target.value)}
+              placeholder="0" style={{ ...inputStyle, width: 60, padding: "6px 8px", textAlign: "center" }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="no-print" style={{ fontSize: 13, color: "#5B7791", marginBottom: 12, textAlign: "center" }}>
+        {totalLabels} etiqueta{totalLabels !== 1 ? "s" : ""} · {sheets} hoja{sheets !== 1 ? "s" : ""} A4
+      </div>
+
+      <button onClick={() => window.print()} disabled={totalLabels === 0} className="no-print" style={{ ...btn("primario", "lg"), width: "100%", opacity: totalLabels === 0 ? 0.5 : 1 }}>
+        <Printer size={18} /> Imprimir {totalLabels > 0 ? `(${totalLabels})` : ""}
+      </button>
+      <button onClick={onClose} className="no-print" style={{ ...btn("terciario"), width: "100%", marginTop: 8 }}>Cerrar</button>
+
+      {totalLabels > 0 && (
+        <div className="sheet-print" style={{
+          display: "grid", gridTemplateColumns: "repeat(3, 62mm)", gridAutoRows: "30mm", gap: "2mm",
+          justifyContent: "center", padding: "10mm",
+        }}>
+          {instances.map((p, i) => (
+            <div key={i} style={{ width: "62mm", height: "30mm", border: "0.3mm dashed #C7D3E2", borderRadius: "1.5mm", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              <div style={{ background: "#185FA5", padding: "1.5mm 2mm" }}>
+                <div style={{ color: "#fff", fontSize: "9pt", fontWeight: 700, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+              </div>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "2mm", padding: "1.5mm 2mm" }}>
+                <div style={{ color: "#185FA5", fontSize: "15pt", fontWeight: 800, flexShrink: 0 }}>${fmt(p.price)}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <BarcodeSVG value={p.barcode} height={22} />
+                  <div style={{ fontSize: "6.5pt", letterSpacing: 0.5, color: "#5B7791", textAlign: "center" }}>{p.barcode}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </Overlay>
   );
 }
