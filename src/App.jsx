@@ -458,14 +458,23 @@ export default function PuntoDeVenta() {
     e.target.value = "";
   };
   const downloadPlantilla = () => {
-    const wsData = [
-      ["Nombre", "Precio", "Precio de compra", "Stock", "Categoría", "Código de barras"],
-      ["Detergente Magistral 500ml", 3500, 2200, 10, "Detergentes", ""],
-    ];
+    const catName = (id) => categories.find((c) => c.id === id)?.name || "";
+    const wsData = [["Nombre", "Precio", "Precio de compra", "Stock", "Categoría", "Código de barras"]];
+    if (products.length === 0) {
+      wsData.push(["Detergente Magistral 500ml", 3500, 2200, 10, "Detergentes", ""]);
+    } else {
+      products
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+        .forEach((p) => {
+          wsData.push([p.name, p.price || 0, p.cost || 0, p.stock || 0, catName(p.categoryId), p.barcode || ""]);
+        });
+    }
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Artículos");
-    XLSX.writeFile(wb, "plantilla-articulos.xlsx");
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, products.length === 0 ? "plantilla-articulos.xlsx" : `articulos-agua-y-jabon-${stamp}.xlsx`);
   };
 
   const saveCategory = () => {
@@ -1185,7 +1194,7 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
               <Upload size={15} /> Importar Excel
             </button>
             <button onClick={onDownloadPlantilla} style={{ ...btn("secundario"), flex: 1 }}>
-              <FileSpreadsheet size={15} /> Plantilla
+              <FileSpreadsheet size={15} /> Descargar Excel
             </button>
             <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={onImportExcel} style={{ display: "none" }} />
           </div>
