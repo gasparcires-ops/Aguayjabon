@@ -340,28 +340,46 @@ export default function PuntoDeVenta() {
     const next = (nums.length ? Math.max(...nums) : 200000000000) + 1;
     return String(next);
   };
-  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "" });
-  const openEditProduct = (p) => setProductForm({ ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "", cost: p.cost ? String(p.cost) : "" });
+  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "" });
+  const openEditProduct = (p) => setProductForm({
+    ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "",
+    cost: p.cost ? String(p.cost) : "", costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
+  });
   const duplicateProduct = (p) => setProductForm({
     name: p.name + " (copia)", price: String(p.price), stock: "0",
     categoryId: p.categoryId || "", modifiers: p.modifiers || [], barcode: "", cost: p.cost ? String(p.cost) : "",
+    costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
   });
   const saveProduct = (formData, keepOpen) => {
     const name = formData.name.trim();
     const price = parseFloat(formData.price);
     const stock = parseInt(formData.stock, 10);
     if (!name || isNaN(price) || price < 0 || isNaN(stock) || stock < 0) return;
-    const cost = parseFloat(formData.cost);
+    const costoLista = parseFloat(formData.costoLista);
+    const descuentoPct = parseFloat(formData.descuentoPct);
+    let cost;
+    let costoListaFinal = 0, descuentoPctFinal = 0;
+    if (!isNaN(costoLista) && costoLista > 0 && !isNaN(descuentoPct) && descuentoPct > 0) {
+      cost = costoLista * (1 - descuentoPct / 100);
+      costoListaFinal = costoLista;
+      descuentoPctFinal = descuentoPct;
+    } else {
+      cost = parseFloat(formData.cost);
+      cost = isNaN(cost) ? 0 : cost;
+    }
     let barcode = (formData.barcode || "").trim();
     if (!barcode) barcode = genBarcode(products);
-    const data = { name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode, cost: isNaN(cost) ? 0 : cost };
+    const data = {
+      name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode,
+      cost, costoLista: costoListaFinal, descuentoPct: descuentoPctFinal,
+    };
     if (formData.id) {
       saveProducts(products.map((p) => (p.id === formData.id ? { ...p, ...data } : p)));
     } else {
       saveProducts([...products, { id: uid(), ...data }]);
     }
     if (keepOpen) {
-      setProductForm({ name: "", price: "", stock: "", categoryId: formData.categoryId || "", modifiers: [], barcode: "", cost: "" });
+      setProductForm({ name: "", price: "", stock: "", categoryId: formData.categoryId || "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "" });
     } else {
       setProductForm(null);
     }
@@ -1254,7 +1272,8 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
                     )}
                     {m !== null && (
                       <div style={{ fontSize: 11, color: "#1B4F9C", display: "flex", alignItems: "center", gap: 3, marginTop: 2 }}>
-                        <TrendingUp size={11} /> Margen {m.toFixed(0)}% (costo ${fmt(p.cost)})
+                        <TrendingUp size={11} /> Margen {m.toFixed(0)}% (costo ${fmt(p.cost)}
+                        {p.descuentoPct > 0 ? ` · lista $${fmt(p.costoLista)} -${p.descuentoPct}%` : ""})
                       </div>
                     )}
                   </div>
@@ -1685,6 +1704,7 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
   const [newCatMode, setNewCatMode] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [margenDeseado, setMargenDeseado] = useState("40");
+  const [conDescuento, setConDescuento] = useState(!!(form.costoLista && Number(form.costoLista) > 0));
   const addModifier = () => setForm({ ...form, modifiers: [...(form.modifiers || []), { name: "", price: "" }] });
   const updateModifier = (idx, key, val) => {
     const mods = [...form.modifiers];
@@ -1693,7 +1713,12 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
   };
   const removeModifier = (idx) => setForm({ ...form, modifiers: form.modifiers.filter((_, i) => i !== idx) });
 
-  const cost = parseFloat(form.cost);
+  const costoLista = parseFloat(form.costoLista);
+  const descuentoPct = parseFloat(form.descuentoPct);
+  const costoConDescuento = !isNaN(costoLista) && costoLista > 0 && !isNaN(descuentoPct) && descuentoPct > 0
+    ? costoLista * (1 - descuentoPct / 100)
+    : null;
+  const cost = conDescuento && costoConDescuento !== null ? costoConDescuento : parseFloat(form.cost);
   const margen = parseFloat(margenDeseado);
   const precioSugerido = !isNaN(cost) && cost > 0 && !isNaN(margen) ? cost * (1 + margen / 100) : null;
 
@@ -1701,7 +1726,10 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
     const cleanMods = (form.modifiers || [])
       .map((m) => ({ name: (m.name || "").trim(), price: parseFloat(m.price) || 0 }))
       .filter((m) => m.name);
-    onSave({ ...form, modifiers: cleanMods }, keepOpen);
+    const finalForm = conDescuento
+      ? { ...form, modifiers: cleanMods, cost: costoConDescuento !== null ? String(costoConDescuento) : form.cost }
+      : { ...form, modifiers: cleanMods, costoLista: "", descuentoPct: "" };
+    onSave(finalForm, keepOpen);
   };
 
   const confirmNewCategory = () => {
@@ -1750,8 +1778,35 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
       </Field>
       <div style={{ display: "flex", gap: 10 }}>
         <Field label="Precio de venta" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
-        <Field label="Precio de compra (costo, opcional)" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.cost || ""} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
+        {!conDescuento && (
+          <Field label="Precio de compra (costo, opcional)" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.cost || ""} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
+        )}
       </div>
+
+      <button
+        onClick={() => setConDescuento((v) => !v)}
+        style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", color: "#1B4F9C", fontSize: 12.5, fontWeight: 600, padding: "0 0 10px", marginTop: -6 }}
+      >
+        <Percent size={13} /> {conDescuento ? "Cargar el costo directo (sin descuento)" : "¿El proveedor te hace un descuento?"}
+      </button>
+
+      {conDescuento && (
+        <div style={{ background: C.azulSuave, border: `1px solid ${C.azulBorde}`, borderRadius: 10, padding: "10px 10px 2px", marginBottom: 12, marginTop: -4 }}>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Field label="Precio de lista (sin descuento)" style={{ flex: 1 }}>
+              <input type="number" min="0" step="0.01" value={form.costoLista || ""} onChange={(e) => setForm({ ...form, costoLista: e.target.value })} placeholder="0.00" style={inputStyle} />
+            </Field>
+            <Field label="Descuento %" style={{ flex: 1 }}>
+              <input type="number" min="0" max="100" step="0.1" value={form.descuentoPct || ""} onChange={(e) => setForm({ ...form, descuentoPct: e.target.value })} placeholder="0" style={inputStyle} />
+            </Field>
+          </div>
+          {costoConDescuento !== null && (
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#1B4F9C", marginBottom: 10 }}>
+              Costo final: ${fmt(costoConDescuento)}
+            </div>
+          )}
+        </div>
+      )}
       {cost > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.azulSuave, border: `1px solid ${C.azulBorde}`, borderRadius: 10, padding: "8px 10px", marginBottom: 12, marginTop: -4 }}>
           <DollarSign size={14} style={{ color: "#1B4F9C", flexShrink: 0 }} />
