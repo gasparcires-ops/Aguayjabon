@@ -5,7 +5,7 @@ import {
   Users, BarChart3, Tag, Percent, LogOut, Lock, ChevronRight, Sliders,
   Download, ScanBarcode, Upload, FileSpreadsheet, Banknote, MessageSquare,
   TrendingUp, Wand2, Smartphone, Landmark, MoreHorizontal, Copy, PackagePlus,
-  DollarSign, CircleAlert, Check,
+  DollarSign, CircleAlert, Check, ClipboardList,
 } from "lucide-react";
 import { getData, setData } from "./lib/storage";
 import * as XLSX from "xlsx";
@@ -62,6 +62,7 @@ export default function PuntoDeVenta() {
   const [observaciones, setObservaciones] = useState([]);
   const [labelProduct, setLabelProduct] = useState(null);
   const [sheetLabelOpen, setSheetLabelOpen] = useState(false);
+  const [presupuestoNextNum, setPresupuestoNextNum] = useState(1);
   const [stockAdjustProduct, setStockAdjustProduct] = useState(null);
   const [priceEditProduct, setPriceEditProduct] = useState(null);
   const fileInputRef = useRef(null);
@@ -89,6 +90,7 @@ export default function PuntoDeVenta() {
       setCajaActual(await load("caja_actual", null));
       setCajaHistorial(await load("caja_historial", []));
       setObservaciones(await load("observaciones", []));
+      setPresupuestoNextNum(await load("presupuesto_next_num", 1));
       setLoaded(true);
     })();
   }, []);
@@ -169,6 +171,13 @@ export default function PuntoDeVenta() {
     XLSX.utils.book_append_sheet(wb, ws, "Movimientos de caja");
     const stamp = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(wb, `movimientos-caja-${stamp}.xlsx`);
+  };
+
+  const consumirNumeroPresupuesto = () => {
+    const n = presupuestoNextNum;
+    setPresupuestoNextNum(n + 1);
+    persist("presupuesto_next_num", n + 1);
+    return n;
   };
 
   const addObservacion = (text) => {
@@ -645,6 +654,8 @@ export default function PuntoDeVenta() {
           .label-print { position: fixed; top: 0; left: 0; width: 100%; }
           .sheet-print, .sheet-print * { visibility: visible; }
           .sheet-print { position: fixed; top: 0; left: 0; width: 100%; }
+          .quote-print, .quote-print * { visibility: visible; }
+          .quote-print { position: fixed; top: 0; left: 0; width: 100%; border: none !important; }
           .no-print { display: none !important; }
           @page { size: 80mm auto; margin: 2mm; }
         }
@@ -670,6 +681,7 @@ export default function PuntoDeVenta() {
               { id: "articulos", label: "Productos", icon: Package },
               { id: "caja", label: "Caja del día", icon: Banknote },
               { id: "resumen", label: "Cómo vamos", icon: BarChart3 },
+              { id: "presupuestos", label: "Presupuestos", icon: ClipboardList },
             ].map((t) => {
               const Icon = t.icon;
               const active = tab === t.id;
@@ -768,6 +780,9 @@ export default function PuntoDeVenta() {
         )}
         {tab === "resumen" && (
           <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} />
+        )}
+        {tab === "presupuestos" && (
+          <PresupuestosTab products={products} onGenerarNumero={consumirNumeroPresupuesto} />
         )}
         {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} onDelete={deleteSale} methodLabel={methodLabel} />}
         {tab === "equipo" && (
@@ -1344,6 +1359,162 @@ function inRange(dateStr, range) {
   }
   if (range === "mes") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   return true;
+}
+
+function PresupuestosTab({ products, onGenerarNumero }) {
+  const [search, setSearch] = useState("");
+  const [qty, setQty] = useState({});
+  const [cliente, setCliente] = useState("");
+  const [validez, setValidez] = useState("7");
+  const [generado, setGenerado] = useState(null);
+
+  const filtered = products
+    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+
+  const setQtyFor = (id, val) => {
+    const n = Math.max(0, parseInt(val, 10) || 0);
+    setQty({ ...qty, [id]: n });
+  };
+
+  const items = products
+    .map((p) => ({ product: p, cantidad: qty[p.id] || 0 }))
+    .filter((i) => i.cantidad > 0)
+    .map((i) => ({ name: i.product.name, cantidad: i.cantidad, precio: i.product.price, subtotal: i.product.price * i.cantidad }));
+
+  const total = items.reduce((a, i) => a + i.subtotal, 0);
+
+  const generar = () => {
+    if (items.length === 0) return;
+    const numero = onGenerarNumero();
+    setGenerado({ numero, fecha: new Date(), cliente: cliente.trim(), validez: parseInt(validez, 10) || 7, items, total });
+  };
+
+  const nuevoPresupuesto = () => {
+    setGenerado(null);
+    setQty({});
+    setCliente("");
+  };
+
+  if (generado) {
+    return (
+      <div>
+        <style>{`@media print { @page { size: A4; margin: 15mm; } }`}</style>
+        <div className="no-print" style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <button onClick={() => window.print()} style={{ ...btn("primario", "lg"), flex: 1 }}>
+            <Printer size={18} /> Imprimir / Guardar PDF
+          </button>
+          <button onClick={nuevoPresupuesto} style={btn("secundario", "lg")}>Nuevo presupuesto</button>
+        </div>
+
+        <div className="quote-print" style={{ maxWidth: 700, margin: "0 auto", background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 24px", borderBottom: `3px solid ${C.azul}` }}>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: C.azul }}>Agua y Jabón</div>
+              <div style={{ fontSize: 12, color: C.textoSuave, marginTop: 2 }}>Artículos de limpieza</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>PRESUPUESTO</div>
+              <div style={{ fontSize: 11.5, color: C.textoSuave, marginTop: 2 }}>
+                N° {String(generado.numero).padStart(4, "0")} · {generado.fecha.toLocaleDateString("es-AR")}
+              </div>
+            </div>
+          </div>
+
+          {generado.cliente && (
+            <div style={{ padding: "12px 24px 0", fontSize: 13, color: C.textoSuave }}>
+              Para: <b style={{ color: C.texto }}>{generado.cliente}</b>
+            </div>
+          )}
+
+          <div style={{ padding: "16px 24px" }}>
+            <div style={{ display: "flex", fontSize: 12.5, fontWeight: 700, color: "#fff", background: C.azul, padding: "8px 10px", borderRadius: "6px 6px 0 0" }}>
+              <div style={{ flex: 3 }}>Artículo</div>
+              <div style={{ flex: 1, textAlign: "center" }}>Cant.</div>
+              <div style={{ flex: 1, textAlign: "right" }}>P. unit.</div>
+              <div style={{ flex: 1, textAlign: "right" }}>Subtotal</div>
+            </div>
+            {generado.items.map((it, i) => (
+              <div key={i} style={{ display: "flex", fontSize: 13, padding: "8px 10px", borderBottom: "1px solid #EDF2F8" }}>
+                <div style={{ flex: 3 }}>{it.name}</div>
+                <div style={{ flex: 1, textAlign: "center" }}>{it.cantidad}</div>
+                <div style={{ flex: 1, textAlign: "right" }}>${fmt(it.precio)}</div>
+                <div style={{ flex: 1, textAlign: "right", fontWeight: 600 }}>${fmt(it.subtotal)}</div>
+              </div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 12, padding: "14px 10px 4px" }}>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>TOTAL</div>
+              <div style={{ fontSize: 19, fontWeight: 900, color: C.azul }}>${fmt(generado.total)}</div>
+            </div>
+          </div>
+
+          <div style={{ padding: "12px 24px 20px", borderTop: "1px solid #EDF2F8", fontSize: 11, color: C.textoTenue }}>
+            Válido por {generado.validez} día{generado.validez !== 1 ? "s" : ""} desde la fecha de emisión. Precios sujetos a stock disponible.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Presupuestos</div>
+      <div style={{ fontSize: 13.5, color: C.textoSuave, marginBottom: 18 }}>Elegí los artículos y cantidades, y generá el PDF para el cliente.</div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={card()}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Field label="Cliente (opcional)" style={{ flex: 1, minWidth: 180 }}>
+              <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre del cliente" style={inputStyle} />
+            </Field>
+            <Field label="Válido por (días)" style={{ width: 130 }}>
+              <input type="number" min="1" value={validez} onChange={(e) => setValidez(e.target.value)} style={inputStyle} />
+            </Field>
+          </div>
+        </div>
+
+        <div style={card()}>
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <Search size={16} style={{ position: "absolute", left: 12, top: 14, color: C.textoTenue }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar producto..." style={{ ...inputStyle, paddingLeft: 36 }} />
+          </div>
+          <div style={{ maxHeight: 340, overflowY: "auto" }}>
+            {filtered.length === 0 && <div style={{ textAlign: "center", padding: 20, fontSize: 13, color: C.textoTenue }}>No hay productos que coincidan.</div>}
+            {filtered.map((p) => (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 4px", borderBottom: "1px solid #EDF2F8" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                  <div style={{ fontSize: 11.5, color: C.textoTenue }}>${fmt(p.price)}</div>
+                </div>
+                <input
+                  type="number" min="0" value={qty[p.id] || ""} onChange={(e) => setQtyFor(p.id, e.target.value)}
+                  placeholder="0" style={{ ...inputStyle, width: 64, padding: "6px 8px", textAlign: "center" }}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {items.length > 0 && (
+          <div style={{ ...card(), background: C.azulSuave }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.textoSuave, marginBottom: 8 }}>RESUMEN</div>
+            {items.map((it, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                <span>{it.cantidad} x {it.name}</span><span style={{ fontWeight: 600 }}>${fmt(it.subtotal)}</span>
+              </div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 800, color: C.azul, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.azulBorde}` }}>
+              <span>Total</span><span>${fmt(total)}</span>
+            </div>
+          </div>
+        )}
+
+        <button onClick={generar} disabled={items.length === 0} style={{ ...btn("primario", "lg"), opacity: items.length === 0 ? 0.5 : 1 }}>
+          <ClipboardList size={18} /> Generar presupuesto
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function ResumenTab({ sales, categories, employees, range, setRange, products }) {
