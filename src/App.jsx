@@ -628,6 +628,7 @@ export default function PuntoDeVenta() {
       <style>{`
         * { box-sizing: border-box; } button { font-family: inherit; cursor: pointer; } input, select { font-family: inherit; }
         button:active { transform: scale(0.98); }
+        input::placeholder { color: #5B7791; opacity: 1; }
         .vender-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; }
         .vender-layout { display: block; }
         .vender-cart { margin-top: 4px; }
@@ -1006,14 +1007,14 @@ function VenderTab({
     <div className="vender-layout">
       <div className="vender-products">
         <div style={{ position: "relative", marginBottom: 8 }}>
-          <Search size={20} style={{ position: "absolute", left: 16, top: 16, color: "#8AA2BC" }} />
+          <Search size={20} style={{ position: "absolute", left: 16, top: 16, color: C.azul }} />
           <input
             autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onScan(search); } }}
             placeholder="Buscar por nombre o escanear código de barras..."
-            style={{ ...inputStyle, padding: "16px 44px", fontSize: 16, borderRadius: 14, border: "1.5px solid #DBE6F2", boxShadow: "0 1px 3px rgba(16,40,80,0.04)" }}
+            style={{ ...inputStyle, padding: "16px 44px", fontSize: 16, borderRadius: 14, border: `2.5px solid ${C.azul}`, background: "#FBFDFF", boxShadow: "0 1px 4px rgba(27,79,156,0.12)" }}
           />
-          <ScanBarcode size={20} style={{ position: "absolute", right: 16, top: 16, color: "#8AA2BC" }} />
+          <ScanBarcode size={20} style={{ position: "absolute", right: 16, top: 16, color: C.azul }} />
         </div>
         {scanMsg && <div style={{ fontSize: 12, color: "#A85C06", marginBottom: 8 }}>{scanMsg}</div>}
 
@@ -1523,11 +1524,12 @@ function ResumenTab({ sales, categories, employees, range, setRange, products })
   const count = filtered.length;
 
   const ganancia = filtered.reduce((acc, s) => {
-    return acc + s.items.reduce((a, i) => {
+    const gananciaBruta = s.items.reduce((a, i) => {
       const prod = products.find((p) => p.id === i.productId);
       const cost = prod && prod.cost ? prod.cost : 0;
       return a + (i.price - cost) * i.qty;
     }, 0);
+    return acc + gananciaBruta - (s.discountAmount || 0);
   }, 0);
   const hayCostos = products.some((p) => p.cost > 0);
 
