@@ -126,11 +126,16 @@ export default function PuntoDeVenta() {
 
   const persist = async (key, value) => {
     try {
-      const ok = await setData(key, value);
-      if (!ok) setSaveError("No se pudo guardar. Probá de nuevo.");
-      else setSaveError("");
+      const result = await setData(key, value);
+      if (!result || !result.ok) {
+        console.error("Fallo al guardar", key, result);
+        setSaveError(`No se pudo guardar (${result && result.message ? result.message : "sin conexión"}). Probá de nuevo.`);
+      } else {
+        setSaveError("");
+      }
     } catch (e) {
-      setSaveError("No se pudo guardar. Probá de nuevo.");
+      console.error("Excepción al guardar", key, e);
+      setSaveError(`No se pudo guardar (${e && e.message ? e.message : "error de red"}). Probá de nuevo.`);
     }
   };
   const saveProducts = (n) => { setProducts(n); persist("products", n); };

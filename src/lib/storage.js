@@ -14,7 +14,11 @@ export async function getData(key) {
     .select("value")
     .eq("key", key)
     .maybeSingle();
-  if (error || !data) return null;
+  if (error) {
+    console.error("Error leyendo de Supabase:", key, error);
+    return null;
+  }
+  if (!data) return null;
   return data.value;
 }
 
@@ -22,5 +26,9 @@ export async function setData(key, value) {
   const { error } = await supabase
     .from("store_data")
     .upsert({ key, value, updated_at: new Date().toISOString() });
-  return !error;
+  if (error) {
+    console.error("Error guardando en Supabase:", error);
+    return { ok: false, message: error.message || String(error) };
+  }
+  return { ok: true };
 }
