@@ -67,33 +67,62 @@ export default function PuntoDeVenta() {
   const [priceEditProduct, setPriceEditProduct] = useState(null);
   const fileInputRef = useRef(null);
 
-  useEffect(() => {
-    (async () => {
-      const load = async (key, fallback) => {
-        try {
-          const v = await getData(key);
-          return v !== null && v !== undefined ? v : fallback;
-        } catch (e) {
-          return fallback;
-        }
-      };
-      setProducts(await load("products", []));
-      setCategories(await load("categories", []));
-      setEmployees(await load("employees", []));
-      setSales(await load("sales", []));
+  const loadAll = async (opts = {}) => {
+    const load = async (key, fallback) => {
+      try {
+        const v = await getData(key);
+        return v !== null && v !== undefined ? v : fallback;
+      } catch (e) {
+        return fallback;
+      }
+    };
+    setProducts(await load("products", []));
+    setCategories(await load("categories", []));
+    setEmployees(await load("employees", []));
+    setSales(await load("sales", []));
+    if (!opts.skipUsers) {
       let users = await load("app_users", []);
       if (!users || users.length === 0) {
         users = [{ id: uid(), username: "aguayjabon", password: "gaspar" }];
         try { await setData("app_users", users); } catch (e) {}
       }
       setAccountUsers(users);
-      setCajaActual(await load("caja_actual", null));
-      setCajaHistorial(await load("caja_historial", []));
-      setObservaciones(await load("observaciones", []));
-      setPresupuestoNextNum(await load("presupuesto_next_num", 1));
+    }
+    setCajaActual(await load("caja_actual", null));
+    setCajaHistorial(await load("caja_historial", []));
+    setObservaciones(await load("observaciones", []));
+    setPresupuestoNextNum(await load("presupuesto_next_num", 1));
+  };
+
+  useEffect(() => {
+    (async () => {
+      await loadAll();
       setLoaded(true);
     })();
   }, []);
+
+  // Si la pestaña estuvo muchas horas abierta sin usarse (turno de otro
+  // empleado, computadora que quedó prendida toda la noche), al volver a
+  // primer plano refresca todo desde la base para no trabajar con datos
+  // viejos que después pisen lo que se cargó mientras tanto.
+  useEffect(() => {
+    if (!loaded || !account) return;
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === "hidden") return;
+      loadAll({ skipUsers: true });
+    };
+    document.addEventListener("visibilitychange", onFocusOrVisible);
+    window.addEventListener("focus", onFocusOrVisible);
+    // Además, aunque la pestaña nunca pierda el foco (por ejemplo si solo se
+    // apaga el monitor toda la noche sin bloquear ni cambiar de ventana),
+    // refresca sola cada 3 minutos para no quedar mostrando datos viejos.
+    const interval = setInterval(() => loadAll({ skipUsers: true }), 3 * 60 * 1000);
+    return () => {
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
+      window.removeEventListener("focus", onFocusOrVisible);
+      clearInterval(interval);
+    };
+  }, [loaded, account]);
 
   const persist = async (key, value) => {
     try {
@@ -111,23 +140,34 @@ export default function PuntoDeVenta() {
   const saveAccountUsers = (n) => { setAccountUsers(n); persist("app_users", n); };
   const saveObservaciones = (n) => { setObservaciones(n); persist("observaciones", n); };
 
-  const abrirCaja = (amount) => {
+  const abrirCaja = async (amount) => {
     const nueva = { openingAmount: amount, openedAt: new Date().toISOString(), employeeName: activeEmployee ? activeEmployee.name : account };
     setCajaActual(nueva);
-    persist("caja_actual", nueva);
+    await persist("caja_actual", nueva);
   };
-  const cerrarCaja = (counted) => {
+  const cerrarCaja = async (counted) => {
     if (!cajaActual) return;
-    const ventasEfectivo = sales
+    // Trae ventas y el historial de caja frescos antes de cerrar, para no
+    // calcular "esperado" con datos viejos ni pisar cierres de otra pestaña.
+    let freshSales = sales;
+    let freshHistorial = cajaHistorial;
+    try {
+      const fs2 = await getData("sales");
+      if (fs2 !== null && fs2 !== undefined) freshSales = fs2;
+      const fh = await getData("caja_historial");
+      if (fh !== null && fh !== undefined) freshHistorial = fh;
+    } catch (e) {}
+
+    const ventasEfectivo = freshSales
       .filter((s) => s.method === "efectivo" && new Date(s.date) >= new Date(cajaActual.openedAt))
       .reduce((a, s) => a + s.total, 0);
     const esperado = cajaActual.openingAmount + ventasEfectivo;
     const registro = { id: uid(), ...cajaActual, closedAt: new Date().toISOString(), ventasEfectivo, esperado, counted, diferencia: counted - esperado };
-    const nextHist = [registro, ...cajaHistorial];
+    const nextHist = [registro, ...freshHistorial];
     setCajaHistorial(nextHist);
-    persist("caja_historial", nextHist);
+    await persist("caja_historial", nextHist);
     setCajaActual(null);
-    persist("caja_actual", null);
+    await persist("caja_actual", null);
   };
 
   const exportarCajaExcel = () => {
@@ -304,9 +344,21 @@ export default function PuntoDeVenta() {
   };
   const removeLine = (lineId) => setCart((prev) => prev.filter((l) => l.lineId !== lineId));
 
-  const cobrar = () => {
+  const cobrar = async () => {
     if (cart.length === 0) return;
-    const nextNumber = sales.length + 1;
+    // Trae los datos más recientes justo antes de guardar, para no pisar
+    // ventas o productos cargados desde otro momento mientras esta pestaña
+    // estaba abierta sin refrescar.
+    let freshProducts = products;
+    let freshSales = sales;
+    try {
+      const fp = await getData("products");
+      if (fp !== null && fp !== undefined) freshProducts = fp;
+      const fsales = await getData("sales");
+      if (fsales !== null && fsales !== undefined) freshSales = fsales;
+    } catch (e) {}
+
+    const nextNumber = freshSales.length + 1;
     const sale = {
       id: uid(),
       number: nextNumber,
@@ -314,7 +366,7 @@ export default function PuntoDeVenta() {
       employeeId: activeEmployee ? activeEmployee.id : null,
       employeeName: activeEmployee ? activeEmployee.name : null,
       items: cart.map((l) => {
-        const product = products.find((p) => p.id === l.productId);
+        const product = freshProducts.find((p) => p.id === l.productId);
         return {
           productId: l.productId, name: l.name, price: l.price, qty: l.qty,
           modifiers: l.modifiers || [], categoryId: product ? product.categoryId : null,
@@ -327,8 +379,8 @@ export default function PuntoDeVenta() {
       total: cartTotals.total,
       method: payMethod,
     };
-    const nextSales = [sale, ...sales];
-    const nextProducts = products.map((p) => {
+    const nextSales = [sale, ...freshSales];
+    const nextProducts = freshProducts.map((p) => {
       const soldQty = cart.filter((l) => l.productId === p.id).reduce((a, l) => a + l.qty, 0);
       return soldQty > 0 ? { ...p, stock: p.stock - soldQty } : p;
     });
@@ -631,7 +683,7 @@ export default function PuntoDeVenta() {
         input::placeholder { color: #5B7791; opacity: 1; }
         .vender-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; }
         .vender-layout { display: block; }
-        .vender-cart { margin-top: 4px; }
+        .vender-cart { margin-top: 4px; max-height: 65vh; display: flex; flex-direction: column; }
         .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
         .sidebar { background: ${C.azulOscuro}; color: #fff; flex-shrink: 0; }
         .sidebar-nav-primary { display: flex; flex-direction: row; overflow-x: auto; gap: 4px; padding: 8px 10px; }
@@ -640,7 +692,7 @@ export default function PuntoDeVenta() {
         @media (min-width: 900px) {
           .vender-layout { display: flex; align-items: flex-start; gap: 20px; }
           .vender-products { flex: 1; min-width: 0; }
-          .vender-cart { width: 360px; flex-shrink: 0; position: sticky; top: 16px; margin-top: 0; }
+          .vender-cart { width: 360px; flex-shrink: 0; position: sticky; top: 16px; margin-top: 0; max-height: calc(100vh - 32px); }
           .vender-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
           .app-shell { flex-direction: row; }
           .sidebar { width: 268px; min-height: 100vh; position: sticky; top: 0; align-self: flex-start; display: flex; flex-direction: column; }
@@ -1072,37 +1124,39 @@ function VenderTab({
       </div>
 
       <div className="vender-cart">
-        <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 16, padding: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "#5B7791", letterSpacing: 0.3 }}>CARRITO</div>
+        <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 16, padding: 16, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "#5B7791", letterSpacing: 0.3, flexShrink: 0 }}>CARRITO</div>
           {cart.length === 0 && (
             <div style={{ textAlign: "center", padding: "22px 8px", color: "#8AA2BC", fontSize: 13 }}>
               <ShoppingCart size={26} style={{ marginBottom: 8, opacity: 0.5 }} />
               <div>Todavía no agregaste productos</div>
             </div>
           )}
-          {cart.map((l) => {
-            const extras = (l.modifiers || []).reduce((a, m) => a + m.price, 0);
-            return (
-              <div key={l.lineId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #EDF2F8" }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</div>
-                  {l.modifiers && l.modifiers.length > 0 && (
-                    <div style={{ fontSize: 11, color: "#8AA2BC" }}>{l.modifiers.map((m) => m.name).join(", ")}</div>
-                  )}
-                  <div style={{ fontSize: 12, color: "#8AA2BC" }}>${fmt(l.price + extras)} c/u</div>
+          <div className="vender-cart-items" style={{ overflowY: "auto", flexShrink: 1, minHeight: 0 }}>
+            {cart.map((l) => {
+              const extras = (l.modifiers || []).reduce((a, m) => a + m.price, 0);
+              return (
+                <div key={l.lineId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #EDF2F8" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</div>
+                    {l.modifiers && l.modifiers.length > 0 && (
+                      <div style={{ fontSize: 11, color: "#8AA2BC" }}>{l.modifiers.map((m) => m.name).join(", ")}</div>
+                    )}
+                    <div style={{ fontSize: 12, color: "#8AA2BC" }}>${fmt(l.price + extras)} c/u</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <IconBtn onClick={() => changeQty(l.lineId, -1)}><Minus size={13} /></IconBtn>
+                    <span style={{ fontSize: 13.5, minWidth: 18, textAlign: "center", fontWeight: 700 }}>{l.qty}</span>
+                    <IconBtn onClick={() => changeQty(l.lineId, 1)}><Plus size={13} /></IconBtn>
+                    <IconBtn onClick={() => removeLine(l.lineId)} danger><Trash2 size={13} /></IconBtn>
+                  </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <IconBtn onClick={() => changeQty(l.lineId, -1)}><Minus size={13} /></IconBtn>
-                  <span style={{ fontSize: 13.5, minWidth: 18, textAlign: "center", fontWeight: 700 }}>{l.qty}</span>
-                  <IconBtn onClick={() => changeQty(l.lineId, 1)}><Plus size={13} /></IconBtn>
-                  <IconBtn onClick={() => removeLine(l.lineId)} danger><Trash2 size={13} /></IconBtn>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
 
           {cart.length > 0 && (
-            <>
+            <div style={{ flexShrink: 0 }}>
               <button onClick={() => setShowDiscount((v) => !v)} style={{
                 display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#1B4F9C",
                 fontSize: 12.5, fontWeight: 700, padding: "10px 0 2px",
@@ -1155,7 +1209,7 @@ function VenderTab({
               <button onClick={cobrar} style={{ ...btn("primario", "lg"), width: "100%" }}>
                 Cobrar ${fmt(cartTotals.total)}
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
