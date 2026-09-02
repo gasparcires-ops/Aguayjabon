@@ -7,7 +7,7 @@ import {
   TrendingUp, Wand2, Smartphone, Landmark, MoreHorizontal, Copy, PackagePlus,
   DollarSign, CircleAlert, Check, ClipboardList,
 } from "lucide-react";
-import { getData, setData } from "./lib/storage";
+import { getData, setData, deleteData } from "./lib/storage";
 import * as XLSX from "xlsx";
 import JsBarcode from "jsbarcode";
 import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
@@ -126,7 +126,10 @@ export default function PuntoDeVenta() {
 
   const persist = async (key, value) => {
     try {
-      const result = await setData(key, value);
+      // Guardar "null" viola la restricción de la tabla (la columna no admite
+      // vacíos); cuando el valor lógico es "sin dato" (ej: caja cerrada),
+      // directamente se borra la fila en vez de intentar guardar un null.
+      const result = value === null || value === undefined ? await deleteData(key) : await setData(key, value);
       if (!result || !result.ok) {
         console.error("Fallo al guardar", key, result);
         setSaveError(`No se pudo guardar (${result && result.message ? result.message : "sin conexión"}). Probá de nuevo.`);

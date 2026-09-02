@@ -32,3 +32,15 @@ export async function setData(key, value) {
   }
   return { ok: true };
 }
+
+export async function deleteData(key) {
+  const { error } = await supabase
+    .from("store_data")
+    .delete()
+    .eq("key", key);
+  if (error) {
+    console.error("Error borrando en Supabase:", error);
+    return { ok: false, message: error.message || String(error) };
+  }
+  return { ok: true };
+}
