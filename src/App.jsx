@@ -24,6 +24,7 @@ export default function PuntoDeVenta() {
   const [loaded, setLoaded] = useState(false);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [sales, setSales] = useState([]);
   const [accountUsers, setAccountUsers] = useState([]);
@@ -62,6 +63,7 @@ export default function PuntoDeVenta() {
   const [observaciones, setObservaciones] = useState([]);
   const [labelProduct, setLabelProduct] = useState(null);
   const [sheetLabelOpen, setSheetLabelOpen] = useState(false);
+  const [priceListOpen, setPriceListOpen] = useState(false);
   const [presupuestoNextNum, setPresupuestoNextNum] = useState(1);
   const [stockAdjustProduct, setStockAdjustProduct] = useState(null);
   const [priceEditProduct, setPriceEditProduct] = useState(null);
@@ -78,6 +80,7 @@ export default function PuntoDeVenta() {
     };
     setProducts(await load("products", []));
     setCategories(await load("categories", []));
+    setGroups(await load("groups", []));
     setEmployees(await load("employees", []));
     setSales(await load("sales", []));
     if (!opts.skipUsers) {
@@ -143,6 +146,7 @@ export default function PuntoDeVenta() {
   };
   const saveProducts = (n) => { setProducts(n); persist("products", n); };
   const saveCategories = (n) => { setCategories(n); persist("categories", n); };
+  const saveGroups = (n) => { setGroups(n); persist("groups", n); };
   const saveEmployees = (n) => { setEmployees(n); persist("employees", n); };
   const saveSales = (n) => { setSales(n); persist("sales", n); };
   const saveAccountUsers = (n) => { setAccountUsers(n); persist("app_users", n); };
@@ -567,10 +571,21 @@ export default function PuntoDeVenta() {
   const saveCategory = () => {
     const name = categoryForm.name.trim();
     if (!name) return;
+    const dup = categories.find((c) => c.name.toLowerCase() === name.toLowerCase() && c.id !== categoryForm.id);
+    if (dup) {
+      // Ya existe una categoría con ese nombre: en vez de crear una duplicada,
+      // fusiona en la existente (o si se estaba editando, mueve los productos ahí).
+      if (categoryForm.id) {
+        saveProducts(products.map((p) => (p.categoryId === categoryForm.id ? { ...p, categoryId: dup.id } : p)));
+        saveCategories(categories.filter((c) => c.id !== categoryForm.id));
+      }
+      setCategoryForm(null);
+      return;
+    }
     if (categoryForm.id) {
-      saveCategories(categories.map((c) => (c.id === categoryForm.id ? { ...c, name } : c)));
+      saveCategories(categories.map((c) => (c.id === categoryForm.id ? { ...c, name, groupId: categoryForm.groupId || "" } : c)));
     } else {
-      saveCategories([...categories, { id: uid(), name }]);
+      saveCategories([...categories, { id: uid(), name, groupId: categoryForm.groupId || "" }]);
     }
     setCategoryForm(null);
   };
@@ -583,9 +598,64 @@ export default function PuntoDeVenta() {
     if (!trimmed) return null;
     const existing = categories.find((c) => c.name.toLowerCase() === trimmed.toLowerCase());
     if (existing) return existing.id;
-    const cat = { id: uid(), name: trimmed };
+    const cat = { id: uid(), name: trimmed, groupId: "" };
     saveCategories([...categories, cat]);
     return cat.id;
+  };
+  const fusionarCategoriasDuplicadas = () => {
+    const grupos = {};
+    categories.forEach((c) => {
+      const key = c.name.trim().toLowerCase();
+      if (!grupos[key]) grupos[key] = [];
+      grupos[key].push(c);
+    });
+    let nextProducts = products;
+    let nextCategories = categories;
+    let fusiones = 0;
+    Object.values(grupos).forEach((lista) => {
+      if (lista.length <= 1) return;
+      const [ganadora, ...resto] = lista;
+      const idsAFusionar = resto.map((c) => c.id);
+      nextProducts = nextProducts.map((p) => (idsAFusionar.includes(p.categoryId) ? { ...p, categoryId: ganadora.id } : p));
+      nextCategories = nextCategories.filter((c) => !idsAFusionar.includes(c.id));
+      fusiones += resto.length;
+    });
+    if (fusiones > 0) {
+      saveProducts(nextProducts);
+      saveCategories(nextCategories);
+    }
+    return fusiones;
+  };
+
+  const saveGroup = (form) => {
+    const name = form.name.trim();
+    if (!name) return;
+    const dup = groups.find((g) => g.name.toLowerCase() === name.toLowerCase() && g.id !== form.id);
+    if (dup) {
+      if (form.id) {
+        saveCategories(categories.map((c) => (c.groupId === form.id ? { ...c, groupId: dup.id } : c)));
+        saveGroups(groups.filter((g) => g.id !== form.id));
+      }
+      return;
+    }
+    if (form.id) {
+      saveGroups(groups.map((g) => (g.id === form.id ? { ...g, name } : g)));
+    } else {
+      saveGroups([...groups, { id: uid(), name }]);
+    }
+  };
+  const deleteGroup = (id) => {
+    saveGroups(groups.filter((g) => g.id !== id));
+    saveCategories(categories.map((c) => (c.groupId === id ? { ...c, groupId: "" } : c)));
+  };
+  const setCategoryGroup = (categoryId, groupId) => {
+    saveCategories(categories.map((c) => (c.id === categoryId ? { ...c, groupId } : c)));
+  };
+  const toggleProductCategory = (productId, categoryId) => {
+    saveProducts(products.map((p) => {
+      if (p.id !== productId) return p;
+      return { ...p, categoryId: p.categoryId === categoryId ? "" : categoryId };
+    }));
   };
 
   const saveEmployee = () => {
@@ -708,16 +778,12 @@ export default function PuntoDeVenta() {
           .sidebar-nav-secondary { flex-direction: column; overflow-x: visible; padding: 4px 14px 14px; gap: 2px; margin-top: auto; }
         }
         @media print {
-          body * { visibility: hidden; }
-          .receipt-print, .receipt-print * { visibility: visible; }
-          .receipt-print { position: fixed; top: 0; left: 0; width: 100%; max-width: 320px; margin: 0 auto; border: none !important; }
-          .label-print, .label-print * { visibility: visible; }
-          .label-print { position: fixed; top: 0; left: 0; width: 100%; }
-          .sheet-print, .sheet-print * { visibility: visible; }
-          .sheet-print { position: fixed; top: 0; left: 0; width: 100%; }
-          .quote-print, .quote-print * { visibility: visible; }
-          .quote-print { position: fixed; top: 0; left: 0; width: 100%; border: none !important; }
+          .app-shell { display: none !important; }
           .no-print { display: none !important; }
+          .modal-overlay { position: static !important; background: none !important; display: block !important; z-index: auto !important; }
+          .modal-content { position: static !important; max-height: none !important; overflow: visible !important; background: none !important; border-radius: 0 !important; padding: 0 !important; max-width: none !important; margin: 0 !important; }
+          .receipt-print { max-width: 320px; margin: 0 auto; border: none !important; }
+          .quote-print { border: none !important; }
           @page { size: 80mm auto; margin: 2mm; }
         }
       `}</style>
@@ -827,9 +893,9 @@ export default function PuntoDeVenta() {
             )}
         {tab === "articulos" && (
           <ArticulosTab
-            products={products} categories={categories}
+            products={products} categories={categories} groups={groups}
             openNewProduct={openNewProduct} openEditProduct={openEditProduct} deleteProduct={deleteProduct}
-            openNewCategory={() => setCategoryForm({ name: "" })} openEditCategory={(c) => setCategoryForm(c)} deleteCategory={deleteCategory}
+            openNewCategory={() => setCategoryForm({ name: "", groupId: "" })} openEditCategory={(c) => setCategoryForm(c)} deleteCategory={deleteCategory}
             fileInputRef={fileInputRef} onImportExcel={handleImportExcel} onDownloadPlantilla={downloadPlantilla}
             onPrintLabel={(p) => setLabelProduct(p)}
             onGenerarCodigos={generarCodigosFaltantes}
@@ -837,6 +903,12 @@ export default function PuntoDeVenta() {
             onSumarStock={(p) => setStockAdjustProduct(p)}
             onEditarPrecio={(p) => setPriceEditProduct(p)}
             onPrintSheet={() => setSheetLabelOpen(true)}
+            onFusionarDuplicadas={fusionarCategoriasDuplicadas}
+            onToggleProductCategory={toggleProductCategory}
+            onSaveGroup={saveGroup}
+            onDeleteGroup={deleteGroup}
+            onSetCategoryGroup={setCategoryGroup}
+            onPrintPriceList={() => setPriceListOpen(true)}
           />
         )}
         {tab === "resumen" && (
@@ -868,7 +940,7 @@ export default function PuntoDeVenta() {
       </div>
 
       {productForm && <ProductFormModal form={productForm} setForm={setProductForm} categories={categories} onSave={saveProduct} onClose={() => setProductForm(null)} onCreateCategory={quickCreateCategory} />}
-      {categoryForm && <CategoryFormModal form={categoryForm} setForm={setCategoryForm} onSave={saveCategory} onClose={() => setCategoryForm(null)} />}
+      {categoryForm && <CategoryFormModal form={categoryForm} setForm={setCategoryForm} groups={groups} onSave={saveCategory} onClose={() => setCategoryForm(null)} />}
       {employeeForm && <EmployeeFormModal form={employeeForm} setForm={setEmployeeForm} onSave={saveEmployee} onClose={() => setEmployeeForm(null)} />}
       {accountForm && <AccountFormModal form={accountForm} setForm={setAccountForm} onSave={saveAccountUser} onClose={() => setAccountForm(null)} />}
       {modifierPicker && (
@@ -882,6 +954,7 @@ export default function PuntoDeVenta() {
       {viewingSale && <ReceiptModal sale={viewingSale} methodLabel={methodLabel} onClose={() => setViewingSale(null)} />}
       {labelProduct && <LabelModal product={labelProduct} onClose={() => setLabelProduct(null)} />}
       {sheetLabelOpen && <SheetLabelModal products={products} onClose={() => setSheetLabelOpen(false)} />}
+      {priceListOpen && <PriceListModal products={products} categories={categories} groups={groups} onClose={() => setPriceListOpen(false)} />}
       {stockAdjustProduct && (
         <StockAdjustModal
           product={stockAdjustProduct}
@@ -1235,14 +1308,18 @@ function IconBtn({ onClick, children, danger }) {
 
 // ---------------- Artículos ----------------
 
-function ArticulosTab({ products, categories, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos, onDuplicate, onSumarStock, onEditarPrecio, onPrintSheet }) {
+function ArticulosTab({ products, categories, groups, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos, onDuplicate, onSumarStock, onEditarPrecio, onPrintSheet, onFusionarDuplicadas, onToggleProductCategory, onSaveGroup, onDeleteGroup, onSetCategoryGroup, onPrintPriceList }) {
   const [section, setSection] = useState("productos");
   const [search, setSearch] = useState("");
   const [onlyPending, setOnlyPending] = useState(false);
+  const [catPicker, setCatPicker] = useState(null);
+  const [groupPicker, setGroupPicker] = useState(null);
+  const [groupForm, setGroupForm] = useState(null);
   const lowStock = products.filter((p) => p.stock <= LOW_STOCK).length;
   const isPending = (p) => !p.price || p.price === 0 || !p.cost || p.cost === 0;
   const pendingCount = products.filter(isPending).length;
   const catName = (id) => categories.find((c) => c.id === id)?.name;
+  const groupName = (id) => groups.find((g) => g.id === id)?.name;
   const margin = (p) => (p.cost && p.cost > 0 ? ((p.price - p.cost) / p.cost) * 100 : null);
 
   const filteredProducts = products
@@ -1254,14 +1331,23 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
     })
     .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
 
+  const categoriasOrdenadas = categories.slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+  const gruposOrdenados = groups.slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+
+  const handleFusionar = () => {
+    const n = onFusionarDuplicadas();
+    alert(n > 0 ? `Se fusionaron ${n} categoría${n > 1 ? "s" : ""} duplicada${n > 1 ? "s" : ""}.` : "No se encontraron categorías duplicadas.");
+  };
+
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <button onClick={() => setSection("productos")} style={{ flex: 1, padding: "8px", borderRadius: 9, border: section === "productos" ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2", background: section === "productos" ? "#E4ECFB" : "#fff", color: section === "productos" ? "#1B4F9C" : "#5B7791", fontWeight: 700, fontSize: 13 }}>Productos</button>
         <button onClick={() => setSection("categorias")} style={{ flex: 1, padding: "8px", borderRadius: 9, border: section === "categorias" ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2", background: section === "categorias" ? "#E4ECFB" : "#fff", color: section === "categorias" ? "#1B4F9C" : "#5B7791", fontWeight: 700, fontSize: 13 }}>Categorías</button>
+        <button onClick={() => setSection("grupos")} style={{ flex: 1, padding: "8px", borderRadius: 9, border: section === "grupos" ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2", background: section === "grupos" ? "#E4ECFB" : "#fff", color: section === "grupos" ? "#1B4F9C" : "#5B7791", fontWeight: 700, fontSize: 13 }}>Grupos</button>
       </div>
 
-      {section === "productos" ? (
+      {section === "productos" && (
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
             <MetricCard label="Productos" value={products.length} />
@@ -1285,7 +1371,7 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
           <button onClick={openNewProduct} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 8 }}>
             <Plus size={18} /> Agregar producto
           </button>
-          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
             <button onClick={() => fileInputRef.current && fileInputRef.current.click()} style={{ ...btn("secundario"), flex: 1 }}>
               <Upload size={15} /> Importar Excel
             </button>
@@ -1297,8 +1383,11 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
           <button onClick={onGenerarCodigos} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 8 }}>
             <Wand2 size={14} /> Generar códigos de barras faltantes
           </button>
-          <button onClick={onPrintSheet} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 14 }}>
+          <button onClick={onPrintSheet} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 8 }}>
             <Tag size={14} /> Imprimir etiquetas en hoja A4
+          </button>
+          <button onClick={onPrintPriceList} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 14 }}>
+            <ClipboardList size={14} /> Imprimir lista de precios para el público
           </button>
 
           <div style={{ position: "relative", marginBottom: 14 }}>
@@ -1328,7 +1417,6 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {filteredProducts.map((p) => {
-              const low = p.stock <= LOW_STOCK;
               const m = margin(p);
               const pending = isPending(p);
               return (
@@ -1374,18 +1462,29 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
             })}
           </div>
         </>
-      ) : (
+      )}
+
+      {section === "categorias" && (
         <>
-          <button onClick={openNewCategory} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 14 }}>
+          <button onClick={openNewCategory} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 8 }}>
             <Plus size={16} /> Agregar categoría
+          </button>
+          <button onClick={handleFusionar} style={{ ...btn("secundario", "sm"), width: "100%", marginBottom: 14 }}>
+            <Wand2 size={13} /> Fusionar categorías duplicadas
           </button>
           {categories.length === 0 && <EmptyState text="Todavía no creaste categorías." />}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {categories.map((c) => (
-              <div key={c.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+            {categoriasOrdenadas.map((c) => (
+              <div key={c.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <Tag size={15} style={{ color: "#1B4F9C" }} />
-                <div style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{c.name}</div>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}</div>
+                  {c.groupId && groupName(c.groupId) && (
+                    <div style={{ fontSize: 11, color: "#8AA2BC" }}>Grupo: {groupName(c.groupId)}</div>
+                  )}
+                </div>
                 <div style={{ fontSize: 12, color: "#8AA2BC" }}>{products.filter((p) => p.categoryId === c.id).length} productos</div>
+                <button onClick={() => setCatPicker(c)} style={btn("secundario", "sm")}>Ver artículos</button>
                 <IconBtn onClick={() => openEditCategory(c)}><Pencil size={13} /></IconBtn>
                 <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${c.name}"?`)) deleteCategory(c.id); }}><Trash2 size={13} /></IconBtn>
               </div>
@@ -1393,7 +1492,147 @@ function ArticulosTab({ products, categories, openNewProduct, openEditProduct, d
           </div>
         </>
       )}
+
+      {section === "grupos" && (
+        <>
+          <div style={{ fontSize: 12.5, color: "#8AA2BC", marginBottom: 12 }}>
+            Los grupos son categorías más grandes (ej: Cocina, Baño, Plásticos, Pisos) para organizar las categorías chicas adentro.
+          </div>
+          <button onClick={() => setGroupForm({ name: "" })} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 14 }}>
+            <Plus size={16} /> Agregar grupo
+          </button>
+          {groups.length === 0 && <EmptyState text="Todavía no creaste grupos." />}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {gruposOrdenados.map((g) => (
+              <div key={g.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <ClipboardList size={15} style={{ color: "#1B4F9C" }} />
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 600, minWidth: 120 }}>{g.name}</div>
+                <div style={{ fontSize: 12, color: "#8AA2BC" }}>{categories.filter((c) => c.groupId === g.id).length} categorías</div>
+                <button onClick={() => setGroupPicker(g)} style={btn("secundario", "sm")}>Ver categorías</button>
+                <IconBtn onClick={() => setGroupForm(g)}><Pencil size={13} /></IconBtn>
+                <IconBtn danger onClick={() => { if (confirm(`¿Eliminar el grupo "${g.name}"?`)) onDeleteGroup(g.id); }}><Trash2 size={13} /></IconBtn>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {catPicker && (
+        <CategoryProductsModal
+          category={catPicker} products={products}
+          onToggle={(productId) => onToggleProductCategory(productId, catPicker.id)}
+          onClose={() => setCatPicker(null)}
+        />
+      )}
+      {groupPicker && (
+        <GroupCategoriesModal
+          group={groupPicker} categories={categories}
+          onToggle={(categoryId) => {
+            const cat = categories.find((c) => c.id === categoryId);
+            onSetCategoryGroup(categoryId, cat && cat.groupId === groupPicker.id ? "" : groupPicker.id);
+          }}
+          onClose={() => setGroupPicker(null)}
+        />
+      )}
+      {groupForm && (
+        <GroupFormModal
+          form={groupForm} setForm={setGroupForm}
+          onSave={() => { onSaveGroup(groupForm); setGroupForm(null); }}
+          onClose={() => setGroupForm(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function CategoryProductsModal({ category, products, onToggle, onClose }) {
+  const [search, setSearch] = useState("");
+  const filtered = products
+    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>Artículos en "{category.name}"</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
+      </div>
+      <div style={{ position: "relative", marginBottom: 10 }}>
+        <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: "#8AA2BC" }} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar producto..." style={{ ...inputStyle, padding: "10px 12px 10px 34px" }} />
+      </div>
+      <div style={{ maxHeight: 380, overflowY: "auto" }}>
+        {filtered.map((p) => {
+          const checked = p.categoryId === category.id;
+          return (
+            <button
+              key={p.id} onClick={() => onToggle(p.id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 8px",
+                borderRadius: 9, border: "none", background: checked ? C.azulSuave : "transparent", textAlign: "left", marginBottom: 2,
+              }}
+            >
+              <div style={{
+                width: 20, height: 20, borderRadius: 5, border: checked ? "none" : "2px solid #DBE6F2", background: checked ? "#1B4F9C" : "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}>
+                {checked && <Check size={13} color="#fff" />}
+              </div>
+              <span style={{ fontSize: 13.5, fontWeight: checked ? 700 : 500 }}>{p.name}</span>
+            </button>
+          );
+        })}
+      </div>
+      <button onClick={onClose} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 14 }}>Listo</button>
+    </Overlay>
+  );
+}
+
+function GroupCategoriesModal({ group, categories, onToggle, onClose }) {
+  const sorted = categories.slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>Categorías en "{group.name}"</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
+      </div>
+      {sorted.length === 0 && <EmptyState text="Todavía no hay categorías creadas." />}
+      <div style={{ maxHeight: 380, overflowY: "auto" }}>
+        {sorted.map((c) => {
+          const checked = c.groupId === group.id;
+          return (
+            <button
+              key={c.id} onClick={() => onToggle(c.id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 8px",
+                borderRadius: 9, border: "none", background: checked ? C.azulSuave : "transparent", textAlign: "left", marginBottom: 2,
+              }}
+            >
+              <div style={{
+                width: 20, height: 20, borderRadius: 5, border: checked ? "none" : "2px solid #DBE6F2", background: checked ? "#1B4F9C" : "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}>
+                {checked && <Check size={13} color="#fff" />}
+              </div>
+              <span style={{ fontSize: 13.5, fontWeight: checked ? 700 : 500 }}>{c.name}</span>
+            </button>
+          );
+        })}
+      </div>
+      <button onClick={onClose} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 14 }}>Listo</button>
+    </Overlay>
+  );
+}
+
+function GroupFormModal({ form, setForm, onSave, onClose }) {
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{form.id ? "Editar grupo" : "Nuevo grupo"}</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
+      </div>
+      <Field label="Nombre"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ej: Cocina, Baño, Plásticos, Pisos" style={inputStyle} /></Field>
+      <button onClick={onSave} style={{ ...btn("primario", "lg"), width: "100%" }}>Guardar</button>
+    </Overlay>
   );
 }
 
@@ -1936,8 +2175,8 @@ function AccountFormModal({ form, setForm, onSave, onClose }) {
 
 function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreateCategory }) {
   const isEdit = !!form.id;
-  const [newCatMode, setNewCatMode] = useState(false);
-  const [newCatName, setNewCatName] = useState("");
+  const [catSearch, setCatSearch] = useState(() => categories.find((c) => c.id === form.categoryId)?.name || "");
+  const [catOpen, setCatOpen] = useState(false);
   const [margenDeseado, setMargenDeseado] = useState("40");
   const [conDescuento, setConDescuento] = useState(!!(form.costoLista && Number(form.costoLista) > 0));
   const addModifier = () => setForm({ ...form, modifiers: [...(form.modifiers || []), { name: "", price: "" }] });
@@ -1967,12 +2206,17 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
     onSave(finalForm, keepOpen);
   };
 
-  const confirmNewCategory = () => {
-    const id = onCreateCategory(newCatName);
-    if (id) setForm({ ...form, categoryId: id });
-    setNewCatName("");
-    setNewCatMode(false);
+  const confirmNewCategory = (name) => {
+    const id = onCreateCategory(name);
+    if (id) {
+      setForm({ ...form, categoryId: id });
+      setCatSearch(name.trim());
+    }
+    setCatOpen(false);
   };
+  const categoriasOrdenadas = categories.slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+  const categoriasFiltradas = categoriasOrdenadas.filter((c) => c.name.toLowerCase().includes(catSearch.trim().toLowerCase()));
+  const coincidenciaExacta = categoriasOrdenadas.some((c) => c.name.toLowerCase() === catSearch.trim().toLowerCase());
 
   return (
     <Overlay onClose={onClose}>
@@ -1986,30 +2230,55 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
         <input value={form.barcode || ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} placeholder="Escaneá el producto con la pistola acá" style={inputStyle} />
       </Field>
       <Field label="Categoría">
-        {!newCatMode ? (
-          <select
-            value={form.categoryId || ""}
-            onChange={(e) => {
-              if (e.target.value === "__new__") { setNewCatMode(true); return; }
-              setForm({ ...form, categoryId: e.target.value });
-            }}
+        <div style={{ position: "relative" }}>
+          <input
+            value={catSearch}
+            onFocus={() => setCatOpen(true)}
+            onChange={(e) => { setCatSearch(e.target.value); setCatOpen(true); if (!e.target.value) setForm({ ...form, categoryId: "" }); }}
+            placeholder="Buscar o escribir una categoría..."
             style={inputStyle}
-          >
-            <option value="">Sin categoría</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            <option value="__new__">+ Crear categoría nueva...</option>
-          </select>
-        ) : (
-          <div style={{ display: "flex", gap: 6 }}>
-            <input
-              autoFocus value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && confirmNewCategory()}
-              placeholder="Nombre de la nueva categoría" style={{ ...inputStyle, flex: 1 }}
-            />
-            <button onClick={confirmNewCategory} style={btn("secundario", "sm")}>Crear</button>
-            <IconBtn onClick={() => { setNewCatMode(false); setNewCatName(""); }}><X size={13} /></IconBtn>
-          </div>
-        )}
+          />
+          {catOpen && (
+            <>
+              <div onClick={() => setCatOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+              <div style={{
+                position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: "1px solid #DBE6F2",
+                borderRadius: 10, maxHeight: 220, overflowY: "auto", zIndex: 61, boxShadow: "0 6px 20px rgba(16,36,61,0.12)",
+              }}>
+                <button
+                  onClick={() => { setForm({ ...form, categoryId: "" }); setCatSearch(""); setCatOpen(false); }}
+                  style={{ width: "100%", textAlign: "left", padding: "10px 12px", border: "none", background: "none", fontSize: 13.5, color: "#5B7791" }}
+                >
+                  Sin categoría
+                </button>
+                {categoriasFiltradas.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => { setForm({ ...form, categoryId: c.id }); setCatSearch(c.name); setCatOpen(false); }}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "10px 12px", border: "none",
+                      background: form.categoryId === c.id ? C.azulSuave : "none", fontSize: 13.5,
+                      fontWeight: form.categoryId === c.id ? 700 : 500, color: "#10243D",
+                    }}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+                {catSearch.trim() && !coincidenciaExacta && (
+                  <button
+                    onClick={() => confirmNewCategory(catSearch)}
+                    style={{ width: "100%", textAlign: "left", padding: "10px 12px", border: "none", borderTop: "1px solid #EDF2F8", background: "none", fontSize: 13.5, fontWeight: 700, color: "#1B4F9C" }}
+                  >
+                    + Crear "{catSearch.trim()}" como categoría nueva
+                  </button>
+                )}
+                {categoriasFiltradas.length === 0 && !catSearch.trim() && (
+                  <div style={{ padding: "10px 12px", fontSize: 12.5, color: "#8AA2BC" }}>Todavía no hay categorías creadas.</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </Field>
       <div style={{ display: "flex", gap: 10 }}>
         <Field label="Precio de venta" style={{ flex: 1 }}><input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" style={inputStyle} /></Field>
@@ -2085,7 +2354,8 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
   );
 }
 
-function CategoryFormModal({ form, setForm, onSave, onClose }) {
+function CategoryFormModal({ form, setForm, groups, onSave, onClose }) {
+  const sorted = groups.slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
   return (
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -2093,6 +2363,12 @@ function CategoryFormModal({ form, setForm, onSave, onClose }) {
         <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
       </div>
       <Field label="Nombre"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ej: Limpieza de cocina" style={inputStyle} /></Field>
+      <Field label="Grupo (opcional)">
+        <select value={form.groupId || ""} onChange={(e) => setForm({ ...form, groupId: e.target.value })} style={inputStyle}>
+          <option value="">Sin grupo</option>
+          {sorted.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+      </Field>
       <button onClick={onSave} style={btn("primario", "lg")}>Guardar</button>
     </Overlay>
   );
@@ -2273,6 +2549,79 @@ function PriceEditModal({ product, onConfirm, onClose }) {
   );
 }
 
+function PriceListModal({ products, categories, groups, onClose }) {
+  const catName = (id) => categories.find((c) => c.id === id)?.name || "Sin categoría";
+  const catGroupName = (categoryId) => {
+    const cat = categories.find((c) => c.id === categoryId);
+    if (!cat || !cat.groupId) return null;
+    return groups.find((g) => g.id === cat.groupId)?.name || null;
+  };
+
+  // Agrupa: Grupo > Categoría > Productos (alfabético en cada nivel)
+  const porGrupo = {};
+  products.forEach((p) => {
+    if (!p.price || p.price <= 0) return;
+    const grupo = catGroupName(p.categoryId) || "Otros artículos";
+    const categoria = catName(p.categoryId);
+    if (!porGrupo[grupo]) porGrupo[grupo] = {};
+    if (!porGrupo[grupo][categoria]) porGrupo[grupo][categoria] = [];
+    porGrupo[grupo][categoria].push(p);
+  });
+  const gruposOrdenados = Object.keys(porGrupo).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+
+  return (
+    <Overlay onClose={onClose}>
+      <style>{`@media print { @page { size: A4; margin: 15mm; } }`}</style>
+
+      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>Lista de precios para el público</div>
+        <button onClick={onClose} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={20} /></button>
+      </div>
+      <div className="no-print" style={{ fontSize: 12.5, color: "#5B7791", marginBottom: 14 }}>
+        Solo incluye artículos con precio cargado. No muestra costo, stock ni código de barras.
+      </div>
+      <button onClick={() => window.print()} className="no-print" style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 16 }}>
+        <Printer size={18} /> Imprimir / Guardar PDF
+      </button>
+
+      <div className="quote-print" style={{ maxWidth: 700, margin: "0 auto", background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ textAlign: "center", padding: "22px 24px 16px", borderBottom: `3px solid ${C.azul}` }}>
+          <div style={{ fontSize: 22, fontWeight: 900, color: C.azul }}>Agua y Jabón</div>
+          <div style={{ fontSize: 13, color: C.textoSuave, marginTop: 3 }}>Lista de precios · {new Date().toLocaleDateString("es-AR")}</div>
+        </div>
+
+        <div style={{ padding: "8px 24px 20px" }}>
+          {gruposOrdenados.length === 0 && (
+            <div style={{ textAlign: "center", padding: 24, fontSize: 13, color: C.textoTenue }}>Todavía no hay productos con precio cargado.</div>
+          )}
+          {gruposOrdenados.map((grupo) => {
+            const categoriasDelGrupo = Object.keys(porGrupo[grupo]).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+            return (
+              <div key={grupo} style={{ marginTop: 18 }}>
+                <div style={{ fontSize: 15, fontWeight: 900, color: C.azul, marginBottom: 6 }}>{grupo}</div>
+                {categoriasDelGrupo.map((categoria) => {
+                  const items = porGrupo[grupo][categoria].slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+                  return (
+                    <div key={categoria} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: C.textoSuave, textTransform: "uppercase", letterSpacing: 0.4, margin: "6px 0 4px" }}>{categoria}</div>
+                      {items.map((p) => (
+                        <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, padding: "3px 0", borderBottom: "1px dotted #E1EAF4" }}>
+                          <span>{p.name}</span>
+                          <span style={{ fontWeight: 700, color: C.azul, whiteSpace: "nowrap", marginLeft: 10 }}>${fmt(p.price)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </Overlay>
+  );
+}
+
 function SheetLabelModal({ products, onClose }) {
   const [search, setSearch] = useState("");
   const [qty, setQty] = useState({});
@@ -2413,8 +2762,8 @@ const inputStyle = inputBase;
 
 function Overlay({ children, onClose }) {
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,30,28,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#F2F6FB", borderRadius: "18px 18px 0 0", padding: 20, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
+    <div className="modal-overlay" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,30,28,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ background: "#F2F6FB", borderRadius: "18px 18px 0 0", padding: 20, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
         {children}
       </div>
     </div>
