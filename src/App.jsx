@@ -65,6 +65,8 @@ export default function PuntoDeVenta() {
   const [sheetLabelOpen, setSheetLabelOpen] = useState(false);
   const [priceListOpen, setPriceListOpen] = useState(false);
   const [presupuestoNextNum, setPresupuestoNextNum] = useState(1);
+  const [presupuestos, setPresupuestos] = useState([]);
+  const [presupuestoGenerado, setPresupuestoGenerado] = useState(null);
   const [stockAdjustProduct, setStockAdjustProduct] = useState(null);
   const [priceEditProduct, setPriceEditProduct] = useState(null);
   const fileInputRef = useRef(null);
@@ -95,6 +97,7 @@ export default function PuntoDeVenta() {
     setCajaHistorial(await load("caja_historial", []));
     setObservaciones(await load("observaciones", []));
     setPresupuestoNextNum(await load("presupuesto_next_num", 1));
+    setPresupuestos(await load("presupuestos", []));
   };
 
   useEffect(() => {
@@ -231,6 +234,19 @@ export default function PuntoDeVenta() {
     persist("presupuesto_next_num", n + 1);
     return n;
   };
+  const generarPresupuesto = ({ cliente, validez, items, total }) => {
+    const numero = consumirNumeroPresupuesto();
+    const registro = { id: uid(), numero, fecha: new Date().toISOString(), cliente, validez, items, total };
+    const next = [registro, ...presupuestos];
+    setPresupuestos(next);
+    persist("presupuestos", next);
+    setPresupuestoGenerado(registro);
+  };
+  const eliminarPresupuesto = (id) => {
+    const next = presupuestos.filter((p) => p.id !== id);
+    setPresupuestos(next);
+    persist("presupuestos", next);
+  };
 
   const addObservacion = (text) => {
     const clean = text.trim();
@@ -356,7 +372,7 @@ export default function PuntoDeVenta() {
   };
   const removeLine = (lineId) => setCart((prev) => prev.filter((l) => l.lineId !== lineId));
 
-  const cobrar = async () => {
+  const cobrar = async (pending = false) => {
     if (cart.length === 0) return;
     // Trae los datos más recientes justo antes de guardar, para no pisar
     // ventas o productos cargados desde otro momento mientras esta pestaña
@@ -389,7 +405,8 @@ export default function PuntoDeVenta() {
       discountValue: discount.value > 0 ? discount.value : 0,
       discountAmount: cartTotals.discountAmount,
       total: cartTotals.total,
-      method: payMethod,
+      method: pending ? null : payMethod,
+      pending: pending,
     };
     const nextSales = [sale, ...freshSales];
     const nextProducts = freshProducts.map((p) => {
@@ -402,6 +419,16 @@ export default function PuntoDeVenta() {
     setDiscount({ type: "pct", value: 0 });
     setShowDiscount(false);
     setReceipt(sale);
+  };
+
+  const marcarComoPagado = async (saleId, method) => {
+    let freshSales = sales;
+    try {
+      const fsales = await getData("sales");
+      if (fsales !== null && fsales !== undefined) freshSales = fsales;
+    } catch (e) {}
+    const next = freshSales.map((s) => (s.id === saleId ? { ...s, pending: false, method, paidAt: s.date, date: new Date().toISOString() } : s));
+    saveSales(next);
   };
 
   // ---- productos ----
@@ -915,9 +942,9 @@ export default function PuntoDeVenta() {
           <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} />
         )}
         {tab === "presupuestos" && (
-          <PresupuestosTab products={products} onGenerarNumero={consumirNumeroPresupuesto} />
+          <PresupuestosTab products={products} presupuestos={presupuestos} onGenerar={generarPresupuesto} onVer={setPresupuestoGenerado} onEliminar={eliminarPresupuesto} />
         )}
-        {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} onDelete={deleteSale} methodLabel={methodLabel} />}
+        {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} onDelete={deleteSale} methodLabel={methodLabel} onMarcarPagado={marcarComoPagado} />}
         {tab === "equipo" && (
           <EquipoTab employees={employees} openNew={() => setEmployeeForm({ name: "", pin: "" })} openEdit={(e) => setEmployeeForm(e)} onDelete={deleteEmployee} />
         )}
@@ -955,6 +982,7 @@ export default function PuntoDeVenta() {
       {labelProduct && <LabelModal product={labelProduct} onClose={() => setLabelProduct(null)} />}
       {sheetLabelOpen && <SheetLabelModal products={products} onClose={() => setSheetLabelOpen(false)} />}
       {priceListOpen && <PriceListModal products={products} categories={categories} groups={groups} onClose={() => setPriceListOpen(false)} />}
+      {presupuestoGenerado && <PresupuestoModal presupuesto={presupuestoGenerado} onClose={() => setPresupuestoGenerado(null)} />}
       {stockAdjustProduct && (
         <StockAdjustModal
           product={stockAdjustProduct}
@@ -1287,8 +1315,11 @@ function VenderTab({
                 })}
               </div>
 
-              <button onClick={cobrar} style={{ ...btn("primario", "lg"), width: "100%" }}>
+              <button onClick={() => cobrar(false)} style={{ ...btn("primario", "lg"), width: "100%" }}>
                 Cobrar ${fmt(cartTotals.total)}
+              </button>
+              <button onClick={() => cobrar(true)} style={{ ...btn("terciario"), width: "100%", marginTop: 8 }}>
+                <ClipboardList size={15} /> Dejar pendiente de pago (a entregar)
               </button>
             </div>
           )}
@@ -1663,12 +1694,11 @@ function inRange(dateStr, range) {
   return true;
 }
 
-function PresupuestosTab({ products, onGenerarNumero }) {
+function PresupuestosTab({ products, presupuestos, onGenerar, onVer, onEliminar }) {
   const [search, setSearch] = useState("");
   const [qty, setQty] = useState({});
   const [cliente, setCliente] = useState("");
   const [validez, setValidez] = useState("7");
-  const [generado, setGenerado] = useState(null);
 
   const filtered = products
     .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
@@ -1688,75 +1718,10 @@ function PresupuestosTab({ products, onGenerarNumero }) {
 
   const generar = () => {
     if (items.length === 0) return;
-    const numero = onGenerarNumero();
-    setGenerado({ numero, fecha: new Date(), cliente: cliente.trim(), validez: parseInt(validez, 10) || 7, items, total });
-  };
-
-  const nuevoPresupuesto = () => {
-    setGenerado(null);
+    onGenerar({ cliente: cliente.trim(), validez: parseInt(validez, 10) || 7, items, total });
     setQty({});
     setCliente("");
   };
-
-  if (generado) {
-    return (
-      <div>
-        <style>{`@media print { @page { size: A4; margin: 15mm; } }`}</style>
-        <div className="no-print" style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          <button onClick={() => window.print()} style={{ ...btn("primario", "lg"), flex: 1 }}>
-            <Printer size={18} /> Imprimir / Guardar PDF
-          </button>
-          <button onClick={nuevoPresupuesto} style={btn("secundario", "lg")}>Nuevo presupuesto</button>
-        </div>
-
-        <div className="quote-print" style={{ maxWidth: 700, margin: "0 auto", background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 24px", borderBottom: `3px solid ${C.azul}` }}>
-            <div>
-              <div style={{ fontSize: 20, fontWeight: 900, color: C.azul }}>Agua y Jabón</div>
-              <div style={{ fontSize: 12, color: C.textoSuave, marginTop: 2 }}>Artículos de limpieza</div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>PRESUPUESTO</div>
-              <div style={{ fontSize: 11.5, color: C.textoSuave, marginTop: 2 }}>
-                N° {String(generado.numero).padStart(4, "0")} · {generado.fecha.toLocaleDateString("es-AR")}
-              </div>
-            </div>
-          </div>
-
-          {generado.cliente && (
-            <div style={{ padding: "12px 24px 0", fontSize: 13, color: C.textoSuave }}>
-              Para: <b style={{ color: C.texto }}>{generado.cliente}</b>
-            </div>
-          )}
-
-          <div style={{ padding: "16px 24px" }}>
-            <div style={{ display: "flex", fontSize: 12.5, fontWeight: 700, color: "#fff", background: C.azul, padding: "8px 10px", borderRadius: "6px 6px 0 0" }}>
-              <div style={{ flex: 3 }}>Artículo</div>
-              <div style={{ flex: 1, textAlign: "center" }}>Cant.</div>
-              <div style={{ flex: 1, textAlign: "right" }}>P. unit.</div>
-              <div style={{ flex: 1, textAlign: "right" }}>Subtotal</div>
-            </div>
-            {generado.items.map((it, i) => (
-              <div key={i} style={{ display: "flex", fontSize: 13, padding: "8px 10px", borderBottom: "1px solid #EDF2F8" }}>
-                <div style={{ flex: 3 }}>{it.name}</div>
-                <div style={{ flex: 1, textAlign: "center" }}>{it.cantidad}</div>
-                <div style={{ flex: 1, textAlign: "right" }}>${fmt(it.precio)}</div>
-                <div style={{ flex: 1, textAlign: "right", fontWeight: 600 }}>${fmt(it.subtotal)}</div>
-              </div>
-            ))}
-            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 12, padding: "14px 10px 4px" }}>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>TOTAL</div>
-              <div style={{ fontSize: 19, fontWeight: 900, color: C.azul }}>${fmt(generado.total)}</div>
-            </div>
-          </div>
-
-          <div style={{ padding: "12px 24px 20px", borderTop: "1px solid #EDF2F8", fontSize: 11, color: C.textoTenue }}>
-            Válido por {generado.validez} día{generado.validez !== 1 ? "s" : ""} desde la fecha de emisión. Precios sujetos a stock disponible.
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -1814,13 +1779,92 @@ function PresupuestosTab({ products, onGenerarNumero }) {
         <button onClick={generar} disabled={items.length === 0} style={{ ...btn("primario", "lg"), opacity: items.length === 0 ? 0.5 : 1 }}>
           <ClipboardList size={18} /> Generar presupuesto
         </button>
+
+        {presupuestos.length > 0 && (
+          <div style={card()}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.textoSuave, marginBottom: 10 }}>PRESUPUESTOS GUARDADOS</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {presupuestos.map((p) => (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 4px", borderBottom: "1px solid #EDF2F8", flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 140 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>N° {String(p.numero).padStart(4, "0")}{p.cliente ? ` · ${p.cliente}` : ""}</div>
+                    <div style={{ fontSize: 11.5, color: C.textoTenue }}>{new Date(p.fecha).toLocaleDateString("es-AR")} · ${fmt(p.total)}</div>
+                  </div>
+                  <button onClick={() => onVer(p)} style={btn("secundario", "sm")}>Ver / Imprimir</button>
+                  <IconBtn danger onClick={() => { if (confirm(`¿Eliminar el presupuesto N° ${String(p.numero).padStart(4, "0")}?`)) onEliminar(p.id); }}><Trash2 size={13} /></IconBtn>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
+function PresupuestoModal({ presupuesto, onClose }) {
+  return (
+    <Overlay onClose={onClose}>
+      <style>{`@media print { @page { size: A4; margin: 15mm; } }`}</style>
+      <div className="no-print" style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => window.print()} style={{ ...btn("primario", "lg"), flex: 1 }}>
+          <Printer size={18} /> Imprimir / Guardar PDF
+        </button>
+        <button onClick={onClose} style={btn("secundario", "lg")}>Cerrar</button>
+      </div>
+
+      <div className="quote-print" style={{ maxWidth: 700, margin: "0 auto", background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "20px 24px", borderBottom: `3px solid ${C.azul}` }}>
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 900, color: C.azul }}>Agua y Jabón</div>
+            <div style={{ fontSize: 12, color: C.textoSuave, marginTop: 2 }}>Artículos de limpieza</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>PRESUPUESTO</div>
+            <div style={{ fontSize: 11.5, color: C.textoSuave, marginTop: 2 }}>
+              N° {String(presupuesto.numero).padStart(4, "0")} · {new Date(presupuesto.fecha).toLocaleDateString("es-AR")}
+            </div>
+          </div>
+        </div>
+
+        {presupuesto.cliente && (
+          <div style={{ padding: "12px 24px 0", fontSize: 13, color: C.textoSuave }}>
+            Para: <b style={{ color: C.texto }}>{presupuesto.cliente}</b>
+          </div>
+        )}
+
+        <div style={{ padding: "16px 24px" }}>
+          <div style={{ display: "flex", fontSize: 12.5, fontWeight: 700, color: "#fff", background: C.azul, padding: "8px 10px", borderRadius: "6px 6px 0 0" }}>
+            <div style={{ flex: 3 }}>Artículo</div>
+            <div style={{ flex: 1, textAlign: "center" }}>Cant.</div>
+            <div style={{ flex: 1, textAlign: "right" }}>P. unit.</div>
+            <div style={{ flex: 1, textAlign: "right" }}>Subtotal</div>
+          </div>
+          {presupuesto.items.map((it, i) => (
+            <div key={i} style={{ display: "flex", fontSize: 13, padding: "8px 10px", borderBottom: "1px solid #EDF2F8" }}>
+              <div style={{ flex: 3 }}>{it.name}</div>
+              <div style={{ flex: 1, textAlign: "center" }}>{it.cantidad}</div>
+              <div style={{ flex: 1, textAlign: "right" }}>${fmt(it.precio)}</div>
+              <div style={{ flex: 1, textAlign: "right", fontWeight: 600 }}>${fmt(it.subtotal)}</div>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 12, padding: "14px 10px 4px" }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>TOTAL</div>
+            <div style={{ fontSize: 19, fontWeight: 900, color: C.azul }}>${fmt(presupuesto.total)}</div>
+          </div>
+        </div>
+
+        <div style={{ padding: "12px 24px 20px", borderTop: "1px solid #EDF2F8", fontSize: 11, color: C.textoTenue }}>
+          Válido por {presupuesto.validez} día{presupuesto.validez !== 1 ? "s" : ""} desde la fecha de emisión. Precios sujetos a stock disponible.
+        </div>
+      </div>
+    </Overlay>
+  );
+}
+
 function ResumenTab({ sales, categories, employees, range, setRange, products }) {
-  const filtered = sales.filter((s) => inRange(s.date, range));
+  const pendingCount = sales.filter((s) => s.pending).length;
+  const filtered = sales.filter((s) => inRange(s.date, range) && !s.pending);
   const total = filtered.reduce((a, s) => a + s.total, 0);
   const count = filtered.length;
 
@@ -1872,6 +1916,11 @@ function ResumenTab({ sales, categories, employees, range, setRange, products })
         <MetricCard label="Ventas" value={count} />
         <MetricCard label="Total vendido" value={"$" + fmt(total)} />
       </div>
+      {pendingCount > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <MetricCard label="Pedidos pendientes de cobro" value={pendingCount} warn />
+        </div>
+      )}
       {hayCostos && (
         <div style={{ marginBottom: 16 }}>
           <MetricCard label="Ganancia estimada" value={"$" + fmt(ganancia)} />
@@ -1946,23 +1995,65 @@ function BarRow({ label, value, max }) {
 
 // ---------------- Historial ----------------
 
-function HistorialTab({ sales, onView, onDelete, methodLabel }) {
-  const totalHoy = sales.filter((s) => new Date(s.date).toDateString() === new Date().toDateString()).reduce((a, s) => a + s.total, 0);
+function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado }) {
+  const [payingId, setPayingId] = useState(null);
+  const [payMethodChoice, setPayMethodChoice] = useState("efectivo");
+  const totalHoy = sales.filter((s) => new Date(s.date).toDateString() === new Date().toDateString() && !s.pending).reduce((a, s) => a + s.total, 0);
+  const pendientes = sales.filter((s) => s.pending);
+  const cobradas = sales.filter((s) => !s.pending);
+
   return (
     <div>
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-        <MetricCard label="Ventas totales" value={sales.length} />
+        <MetricCard label="Ventas totales" value={cobradas.length} />
         <MetricCard label="Vendido hoy" value={"$" + fmt(totalHoy)} />
       </div>
-      {sales.length === 0 && <EmptyState text="Todavía no registraste ninguna venta." />}
+
+      {pendientes.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#A85C06", marginBottom: 8 }}>PEDIDOS PENDIENTES DE COBRO</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {pendientes.map((s) => (
+              <div key={s.id} style={{ background: "#FFFBF2", border: "1px solid #FBE3B8", borderRadius: 12, padding: "10px 12px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button onClick={() => onView(s)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Pedido #{s.number}</div>
+                      <div style={{ fontSize: 12, color: "#8AA2BC" }}>{new Date(s.date).toLocaleString("es-AR")}{s.employeeName ? ` · ${s.employeeName}` : ""}</div>
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#A85C06", marginRight: 8 }}>${fmt(s.total)}</div>
+                  </button>
+                  <IconBtn danger onClick={() => { if (confirm(`¿Eliminar el pedido #${s.number}? Esto devuelve el stock.`)) onDelete(s.id); }}><Trash2 size={13} /></IconBtn>
+                </div>
+                {payingId === s.id ? (
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    <select value={payMethodChoice} onChange={(e) => setPayMethodChoice(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 120 }}>
+                      {Object.keys(methodLabel).map((m) => <option key={m} value={m}>{methodLabel[m]}</option>)}
+                    </select>
+                    <button onClick={() => { onMarcarPagado(s.id, payMethodChoice); setPayingId(null); }} style={btn("primario", "sm")}>Confirmar cobro</button>
+                    <button onClick={() => setPayingId(null)} style={btn("terciario", "sm")}>Cancelar</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setPayingId(s.id)} style={{ ...btn("secundario", "sm"), width: "100%", marginTop: 8 }}>
+                    <DollarSign size={13} /> Marcar como pagado
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {cobradas.length === 0 && pendientes.length === 0 && <EmptyState text="Todavía no registraste ninguna venta." />}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {sales.map((s) => (
+        {cobradas.map((s) => (
           <div key={s.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => onView(s)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
                 <div style={{ fontSize: 13.5, fontWeight: 600 }}>Comprobante #{s.number}</div>
                 <div style={{ fontSize: 12, color: "#8AA2BC" }}>
                   {new Date(s.date).toLocaleString("es-AR")} · {methodLabel[s.method]}{s.employeeName ? ` · ${s.employeeName}` : ""}
+                  {s.paidAt ? " · pedido pagado al entregar" : ""}
                 </div>
               </div>
               <div style={{ fontSize: 15, fontWeight: 700, color: "#1B4F9C", marginRight: 8 }}>${fmt(s.total)}</div>
@@ -2431,7 +2522,11 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
       <div className="receipt-print" style={{ background: "#fff", borderRadius: 4, padding: "22px 20px", fontFamily: mono, border: "1px solid #E1EAF4" }}>
         <div style={{ textAlign: "center", marginBottom: 4 }}>
           <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>AGUA Y JABÓN</div>
-          <div style={{ fontSize: 10.5, color: "#8AA2BC", marginTop: 2 }}>Comprobante interno · no válido como factura fiscal</div>
+          {sale.pending ? (
+            <div style={{ fontSize: 11, color: "#A85C06", fontWeight: 700, marginTop: 2 }}>PEDIDO · PENDIENTE DE PAGO</div>
+          ) : (
+            <div style={{ fontSize: 10.5, color: "#8AA2BC", marginTop: 2 }}>Comprobante interno · no válido como factura fiscal</div>
+          )}
         </div>
         <Dashed />
         <div style={{ fontSize: 12, display: "flex", justifyContent: "space-between", margin: "8px 0 4px" }}>
@@ -2467,7 +2562,7 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, margin: "8px 0" }}>
           <span>TOTAL</span><span>${fmt(sale.total)}</span>
         </div>
-        <div style={{ fontSize: 11.5, color: "#5B7791" }}>Pago: {methodLabel[sale.method]}</div>
+        <div style={{ fontSize: 11.5, color: "#5B7791" }}>{sale.pending ? "A cobrar al entregar" : `Pago: ${methodLabel[sale.method]}`}</div>
         <Dashed />
         <div style={{ textAlign: "center", fontSize: 10.5, color: "#8AA2BC", marginTop: 6 }}>¡Gracias por su compra!</div>
       </div>
