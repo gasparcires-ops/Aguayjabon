@@ -22,6 +22,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 export default function PuntoDeVenta() {
   const [loaded, setLoaded] = useState(false);
+  const [nuevaVersionDisponible, setNuevaVersionDisponible] = useState(false);
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -129,6 +130,27 @@ export default function PuntoDeVenta() {
       clearInterval(interval);
     };
   }, [loaded, account]);
+
+  // Avisa si se publicó una versión nueva de la app (por ejemplo, subiste un
+  // cambio a GitHub y Vercel ya lo desplegó) mientras esta pestaña sigue
+  // abierta con el código viejo cargado en memoria.
+  useEffect(() => {
+    let versionInicial = null;
+    const chequearVersion = async () => {
+      try {
+        const res = await fetch(`/version.json?t=${Date.now()}`, { cache: "no-store" });
+        const data = await res.json();
+        if (versionInicial === null) {
+          versionInicial = data.version;
+        } else if (data.version !== versionInicial) {
+          setNuevaVersionDisponible(true);
+        }
+      } catch (e) {}
+    };
+    chequearVersion();
+    const interval = setInterval(chequearVersion, 2 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const persist = async (key, value) => {
     try {
@@ -814,6 +836,18 @@ export default function PuntoDeVenta() {
           @page { size: 80mm auto; margin: 2mm; }
         }
       `}</style>
+
+      {nuevaVersionDisponible && (
+        <div className="no-print" style={{
+          position: "sticky", top: 0, zIndex: 100, background: "#A85C06", color: "#fff", padding: "10px 16px",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 12, fontSize: 13.5, fontWeight: 600, flexWrap: "wrap",
+        }}>
+          <span>Hay una actualización de la app disponible.</span>
+          <button onClick={() => window.location.reload()} style={{ background: "#fff", color: "#A85C06", border: "none", borderRadius: 8, padding: "6px 14px", fontWeight: 800, fontSize: 13 }}>
+            Actualizar ahora
+          </button>
+        </div>
+      )}
 
       <div className="app-shell">
         <div className="sidebar">
