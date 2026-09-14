@@ -44,3 +44,24 @@ export async function deleteData(key) {
   }
   return { ok: true };
 }
+
+// Sube una foto de producto al bucket "productos" (tiene que existir y ser
+// público - ver instrucciones). Devuelve la URL pública o un error.
+export async function uploadProductImage(file, productId) {
+  try {
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `${productId}-${Date.now()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("productos")
+      .upload(path, file, { upsert: true, cacheControl: "3600" });
+    if (uploadError) {
+      console.error("Error subiendo imagen:", uploadError);
+      return { ok: false, message: uploadError.message || String(uploadError) };
+    }
+    const { data } = supabase.storage.from("productos").getPublicUrl(path);
+    return { ok: true, url: data.publicUrl };
+  } catch (e) {
+    console.error("Excepción subiendo imagen:", e);
+    return { ok: false, message: e.message || String(e) };
+  }
+}

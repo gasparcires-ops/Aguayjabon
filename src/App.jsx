@@ -5,9 +5,9 @@ import {
   Users, BarChart3, Tag, Percent, LogOut, Lock, ChevronRight, Sliders,
   Download, ScanBarcode, Upload, FileSpreadsheet, Banknote, MessageSquare,
   TrendingUp, Wand2, Smartphone, Landmark, MoreHorizontal, Copy, PackagePlus,
-  DollarSign, CircleAlert, Check, ClipboardList,
+  DollarSign, CircleAlert, Check, ClipboardList, Image as ImageIcon,
 } from "lucide-react";
-import { getData, setData, deleteData } from "./lib/storage";
+import { getData, setData, deleteData, uploadProductImage } from "./lib/storage";
 import * as XLSX from "xlsx";
 import JsBarcode from "jsbarcode";
 import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
@@ -462,15 +462,17 @@ export default function PuntoDeVenta() {
     const next = (nums.length ? Math.max(...nums) : 200000000000) + 1;
     return String(next);
   };
-  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "" });
+  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "", imageUrl: "" });
   const openEditProduct = (p) => setProductForm({
     ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "",
     cost: p.cost ? String(p.cost) : "", costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
+    imageUrl: p.imageUrl || "",
   });
   const duplicateProduct = (p) => setProductForm({
     name: p.name + " (copia)", price: String(p.price), stock: "0",
     categoryId: p.categoryId || "", modifiers: p.modifiers || [], barcode: "", cost: p.cost ? String(p.cost) : "",
     costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
+    imageUrl: p.imageUrl || "",
   });
   const saveProduct = (formData, keepOpen) => {
     const name = formData.name.trim();
@@ -493,7 +495,7 @@ export default function PuntoDeVenta() {
     if (!barcode) barcode = genBarcode(products);
     const data = {
       name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode,
-      cost, costoLista: costoListaFinal, descuentoPct: descuentoPctFinal,
+      cost, costoLista: costoListaFinal, descuentoPct: descuentoPctFinal, imageUrl: formData.imageUrl || "",
     };
     if (formData.id) {
       saveProducts(products.map((p) => (p.id === formData.id ? { ...p, ...data } : p)));
@@ -1000,7 +1002,7 @@ export default function PuntoDeVenta() {
         </div>
       </div>
 
-      {productForm && <ProductFormModal form={productForm} setForm={setProductForm} categories={categories} onSave={saveProduct} onClose={() => setProductForm(null)} onCreateCategory={quickCreateCategory} />}
+      {productForm && <ProductFormModal form={productForm} setForm={setProductForm} categories={categories} onSave={saveProduct} onClose={() => setProductForm(null)} onCreateCategory={quickCreateCategory} onUploadImage={(file) => uploadProductImage(file, productForm.id || uid())} />}
       {categoryForm && <CategoryFormModal form={categoryForm} setForm={setCategoryForm} groups={groups} onSave={saveCategory} onClose={() => setCategoryForm(null)} />}
       {employeeForm && <EmployeeFormModal form={employeeForm} setForm={setEmployeeForm} onSave={saveEmployee} onClose={() => setEmployeeForm(null)} />}
       {accountForm && <AccountFormModal form={accountForm} setForm={setAccountForm} onSave={saveAccountUser} onClose={() => setAccountForm(null)} />}
@@ -2322,7 +2324,52 @@ function AccountFormModal({ form, setForm, onSave, onClose }) {
 
 // ---------------- Modales ----------------
 
-function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreateCategory }) {
+function ProductPhotoField({ form, setForm, onUploadImage }) {
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSubiendo(true);
+    setError("");
+    const result = await onUploadImage(file);
+    setSubiendo(false);
+    if (result.ok) {
+      setForm({ ...form, imageUrl: result.url });
+    } else {
+      setError(result.message || "No se pudo subir la foto.");
+    }
+    e.target.value = "";
+  };
+
+  return (
+    <Field label="Foto (opcional, se ve en el catálogo público)">
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {form.imageUrl ? (
+          <img src={form.imageUrl} alt="" style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 10, border: "1px solid #DBE6F2" }} />
+        ) : (
+          <div style={{ width: 56, height: 56, borderRadius: 10, border: "1.5px dashed #DBE6F2", display: "flex", alignItems: "center", justifyContent: "center", color: "#8AA2BC" }}>
+            <ImageIcon size={20} />
+          </div>
+        )}
+        <div style={{ flex: 1 }}>
+          <button onClick={() => inputRef.current && inputRef.current.click()} disabled={subiendo} style={btn("secundario", "sm")}>
+            {subiendo ? "Subiendo..." : form.imageUrl ? "Cambiar foto" : "Subir foto"}
+          </button>
+          {form.imageUrl && (
+            <button onClick={() => setForm({ ...form, imageUrl: "" })} style={{ ...btn("terciario", "sm"), marginLeft: 6 }}>Quitar</button>
+          )}
+          <input ref={inputRef} type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} />
+        </div>
+      </div>
+      {error && <div style={{ fontSize: 12, color: "#B0242A", marginTop: 6 }}>{error}</div>}
+    </Field>
+  );
+}
+
+function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreateCategory, onUploadImage }) {
   const isEdit = !!form.id;
   const [catSearch, setCatSearch] = useState(() => categories.find((c) => c.id === form.categoryId)?.name || "");
   const [catOpen, setCatOpen] = useState(false);
@@ -2375,6 +2422,7 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
       </div>
 
       <Field label="Nombre"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ej: Detergente 1L" style={inputStyle} /></Field>
+      <ProductPhotoField form={form} setForm={setForm} onUploadImage={onUploadImage} />
       <Field label="Código de barras (opcional)">
         <input value={form.barcode || ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} placeholder="Escaneá el producto con la pistola acá" style={inputStyle} />
       </Field>

@@ -1,4 +1,7 @@
 {
+  "rewrites": [
+    { "source": "/((?!logo.jpg|version.json|supabase-schema.sql|assets/.*).*)", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "/index.html",
