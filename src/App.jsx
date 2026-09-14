@@ -452,6 +452,15 @@ export default function PuntoDeVenta() {
     const next = freshSales.map((s) => (s.id === saleId ? { ...s, pending: false, method, paidAt: s.date, date: new Date().toISOString() } : s));
     saveSales(next);
   };
+  const marcarComoConfirmado = async (saleId) => {
+    let freshSales = sales;
+    try {
+      const fsales = await getData("sales");
+      if (fsales !== null && fsales !== undefined) freshSales = fsales;
+    } catch (e) {}
+    const next = freshSales.map((s) => (s.id === saleId ? { ...s, confirmado: true, confirmadoPor: activeEmployee ? activeEmployee.name : account } : s));
+    saveSales(next);
+  };
 
   // ---- productos ----
   const genBarcode = (existingProducts) => {
@@ -462,17 +471,17 @@ export default function PuntoDeVenta() {
     const next = (nums.length ? Math.max(...nums) : 200000000000) + 1;
     return String(next);
   };
-  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "", imageUrl: "" });
+  const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "", imageUrl: "", description: "", enOferta: false, precioOferta: "" });
   const openEditProduct = (p) => setProductForm({
     ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "",
     cost: p.cost ? String(p.cost) : "", costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
-    imageUrl: p.imageUrl || "",
+    imageUrl: p.imageUrl || "", description: p.description || "", enOferta: !!p.enOferta, precioOferta: p.precioOferta ? String(p.precioOferta) : "",
   });
   const duplicateProduct = (p) => setProductForm({
     name: p.name + " (copia)", price: String(p.price), stock: "0",
     categoryId: p.categoryId || "", modifiers: p.modifiers || [], barcode: "", cost: p.cost ? String(p.cost) : "",
     costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
-    imageUrl: p.imageUrl || "",
+    imageUrl: p.imageUrl || "", description: p.description || "", enOferta: false, precioOferta: "",
   });
   const saveProduct = (formData, keepOpen) => {
     const name = formData.name.trim();
@@ -493,9 +502,13 @@ export default function PuntoDeVenta() {
     }
     let barcode = (formData.barcode || "").trim();
     if (!barcode) barcode = genBarcode(products);
+    const precioOferta = parseFloat(formData.precioOferta);
     const data = {
       name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode,
       cost, costoLista: costoListaFinal, descuentoPct: descuentoPctFinal, imageUrl: formData.imageUrl || "",
+      description: (formData.description || "").trim(),
+      enOferta: !!formData.enOferta && !isNaN(precioOferta) && precioOferta > 0,
+      precioOferta: !isNaN(precioOferta) ? precioOferta : 0,
     };
     if (formData.id) {
       saveProducts(products.map((p) => (p.id === formData.id ? { ...p, ...data } : p)));
@@ -509,6 +522,9 @@ export default function PuntoDeVenta() {
     }
   };
   const deleteProduct = (id) => saveProducts(products.filter((p) => p.id !== id));
+  const setProductOferta = (id, enOferta, precioOferta) => {
+    saveProducts(products.map((p) => (p.id === id ? { ...p, enOferta, precioOferta: precioOferta || 0 } : p)));
+  };
   const sumarStock = (product, amount) => {
     if (!amount || amount <= 0) return;
     saveProducts(products.map((p) => (p.id === product.id ? { ...p, stock: p.stock + amount } : p)));
@@ -803,6 +819,7 @@ export default function PuntoDeVenta() {
     .filter((s) => new Date(s.date).toDateString() === new Date().toDateString())
     .reduce((a, s) => a + s.total, 0);
   const pendingProductsCount = products.filter((p) => !p.price || p.price === 0 || !p.cost || p.cost === 0).length;
+  const pedidosWebSinConfirmar = sales.filter((s) => s.origen === "catalogo" && !s.confirmado).length;
 
   return (
     <div style={{ minHeight: "100%", background: "#F2F6FB", fontFamily: sans, color: "#10243D" }}>
@@ -890,6 +907,7 @@ export default function PuntoDeVenta() {
           <div className="sidebar-nav-secondary">
             {[
               { id: "historial", label: "Historial", icon: Receipt },
+              { id: "catalogoAdmin", label: "Catálogo", icon: ImageIcon },
               { id: "equipo", label: "Equipo", icon: Users },
               { id: "avisos", label: "Avisos", icon: MessageSquare },
               { id: "accesos", label: "Accesos", icon: Lock },
@@ -940,6 +958,7 @@ export default function PuntoDeVenta() {
                 soldToday={soldToday}
                 productsCount={products.length}
                 pendingCount={pendingProductsCount}
+                pedidosWebCount={pedidosWebSinConfirmar}
                 setTab={setTab}
                 onCargarProducto={() => { setTab("articulos"); openNewProduct(); }}
               />
@@ -980,7 +999,10 @@ export default function PuntoDeVenta() {
         {tab === "presupuestos" && (
           <PresupuestosTab products={products} presupuestos={presupuestos} onGenerar={generarPresupuesto} onVer={setPresupuestoGenerado} onEliminar={eliminarPresupuesto} />
         )}
-        {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} onDelete={deleteSale} methodLabel={methodLabel} onMarcarPagado={marcarComoPagado} />}
+        {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} onDelete={deleteSale} methodLabel={methodLabel} onMarcarPagado={marcarComoPagado} onConfirmar={marcarComoConfirmado} />}
+        {tab === "catalogoAdmin" && (
+          <CatalogoAdminTab products={products} categories={categories} groups={groups} openEditProduct={openEditProduct} onSetOferta={setProductOferta} />
+        )}
         {tab === "equipo" && (
           <EquipoTab employees={employees} openNew={() => setEmployeeForm({ name: "", pin: "" })} openEdit={(e) => setEmployeeForm(e)} onDelete={deleteEmployee} />
         )}
@@ -1125,7 +1147,7 @@ function saludoSegunHora() {
   return "Buenas noches";
 }
 
-function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendingCount, setTab, onCargarProducto }) {
+function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendingCount, pedidosWebCount, setTab, onCargarProducto }) {
   const fecha = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
   const fechaCap = fecha.charAt(0).toUpperCase() + fecha.slice(1);
 
@@ -1138,6 +1160,19 @@ function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendin
 
   return (
     <div>
+      {pedidosWebCount > 0 && (
+        <button onClick={() => setTab("historial")} style={{
+          width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 10, background: "#FDECEC",
+          border: "1px solid #F0C9C9", borderRadius: 12, padding: "12px 14px", marginBottom: 16,
+        }}>
+          <ClipboardList size={18} style={{ color: C.rojo, flexShrink: 0 }} />
+          <div style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: C.rojo }}>
+            {pedidosWebCount} pedido{pedidosWebCount !== 1 ? "s" : ""} nuevo{pedidosWebCount !== 1 ? "s" : ""} del catálogo sin confirmar
+          </div>
+          <ChevronRight size={16} style={{ color: C.rojo }} />
+        </button>
+      )}
+
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 18 }}>
         <div>
           <div style={{ fontSize: 25, fontWeight: 900, color: C.texto }}>{saludoSegunHora()}{employeeName ? `, ${employeeName}` : ""}</div>
@@ -1374,6 +1409,112 @@ function IconBtn({ onClick, children, danger }) {
 }
 
 // ---------------- Artículos ----------------
+
+function CatalogoAdminTab({ products, categories, groups, openEditProduct, onSetOferta }) {
+  const [search, setSearch] = useState("");
+  const [editingOferta, setEditingOferta] = useState(null);
+  const [ofertaPrecio, setOfertaPrecio] = useState("");
+
+  const catName = (id) => categories.find((c) => c.id === id)?.name || "Sin categoría";
+  const catGroupId = (categoryId) => categories.find((c) => c.id === categoryId)?.groupId || "";
+  const groupName = (id) => groups.find((g) => g.id === id)?.name || "Otros";
+
+  const disponibles = products
+    .filter((p) => p.price > 0 && p.stock > 0)
+    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const noDisponibles = products.filter((p) => !(p.price > 0 && p.stock > 0)).length;
+
+  const porGrupo = {};
+  disponibles.forEach((p) => {
+    const gid = catGroupId(p.categoryId) || "sin-grupo";
+    const gname = gid === "sin-grupo" ? "Otros artículos" : groupName(gid);
+    const cname = catName(p.categoryId);
+    if (!porGrupo[gname]) porGrupo[gname] = {};
+    if (!porGrupo[gname][cname]) porGrupo[gname][cname] = [];
+    porGrupo[gname][cname].push(p);
+  });
+  const gruposOrdenados = Object.keys(porGrupo).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+
+  const empezarOferta = (p) => {
+    setEditingOferta(p.id);
+    setOfertaPrecio(p.precioOferta ? String(p.precioOferta) : "");
+  };
+  const confirmarOferta = (p) => {
+    const precio = parseFloat(ofertaPrecio);
+    if (isNaN(precio) || precio <= 0) return;
+    onSetOferta(p.id, true, precio);
+    setEditingOferta(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 22, fontWeight: 900 }}>Catálogo</div>
+        <a href="/catalogo" target="_blank" rel="noopener noreferrer" style={{ ...btn("secundario", "sm"), textDecoration: "none" }}>
+          Ver catálogo público ↗
+        </a>
+      </div>
+      <div style={{ fontSize: 13.5, color: C.textoSuave, marginBottom: 4 }}>Así se ve tu catálogo público. Solo aparecen productos con stock y precio cargado.</div>
+      {noDisponibles > 0 && (
+        <div style={{ fontSize: 12.5, color: C.textoTenue, marginBottom: 16 }}>{noDisponibles} producto{noDisponibles !== 1 ? "s" : ""} no aparece{noDisponibles !== 1 ? "n" : ""} en el catálogo por falta de stock o precio.</div>
+      )}
+
+      <div style={{ position: "relative", marginBottom: 18 }}>
+        <Search size={16} style={{ position: "absolute", left: 12, top: 12, color: C.textoTenue }} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar producto..." style={{ ...inputStyle, padding: "10px 12px 10px 34px" }} />
+      </div>
+
+      {gruposOrdenados.length === 0 && <EmptyState text="No hay productos disponibles en el catálogo por ahora." />}
+
+      {gruposOrdenados.map((gname) => (
+        <div key={gname} style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: C.azul, marginBottom: 8 }}>{gname}</div>
+          {Object.keys(porGrupo[gname]).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })).map((cname) => (
+            <div key={cname} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.textoSuave, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>{cname}</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {porGrupo[gname][cname].map((p) => (
+                  <div key={p.id} style={{ background: "#fff", border: p.enOferta ? "1px solid #F0C9C9" : "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    {p.imageUrl ? (
+                      <img src={p.imageUrl} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 8 }} />
+                    ) : (
+                      <div style={{ width: 40, height: 40, borderRadius: 8, background: "#F2F6FB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <ImageIcon size={16} style={{ color: C.textoTenue }} />
+                      </div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 140 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.name}</div>
+                      {p.enOferta ? (
+                        <div style={{ fontSize: 12.5 }}>
+                          <span style={{ color: C.textoTenue, textDecoration: "line-through", marginRight: 6 }}>${fmt(p.price)}</span>
+                          <span style={{ color: C.rojo, fontWeight: 700 }}>${fmt(p.precioOferta)}</span>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12.5, color: C.textoSuave }}>${fmt(p.price)}</div>
+                      )}
+                    </div>
+                    {editingOferta === p.id ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input type="number" min="0" step="0.01" value={ofertaPrecio} onChange={(e) => setOfertaPrecio(e.target.value)} placeholder="Precio oferta" style={{ ...inputStyle, width: 110, padding: "7px 8px" }} />
+                        <button onClick={() => confirmarOferta(p)} style={btn("primario", "sm")}>Guardar</button>
+                        <button onClick={() => setEditingOferta(null)} style={btn("terciario", "sm")}>Cancelar</button>
+                      </div>
+                    ) : p.enOferta ? (
+                      <button onClick={() => onSetOferta(p.id, false, p.precioOferta)} style={btn("terciario", "sm")}>Quitar oferta</button>
+                    ) : (
+                      <button onClick={() => empezarOferta(p)} style={btn("secundario", "sm")}>Poner en oferta</button>
+                    )}
+                    <IconBtn onClick={() => openEditProduct(p)}><Pencil size={13} /></IconBtn>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ArticulosTab({ products, categories, groups, openNewProduct, openEditProduct, deleteProduct, openNewCategory, openEditCategory, deleteCategory, fileInputRef, onImportExcel, onDownloadPlantilla, onPrintLabel, onGenerarCodigos, onDuplicate, onSumarStock, onEditarPrecio, onPrintSheet, onFusionarDuplicadas, onToggleProductCategory, onSaveGroup, onDeleteGroup, onSetCategoryGroup, onPrintPriceList }) {
   const [section, setSection] = useState("productos");
@@ -2055,11 +2196,12 @@ function BarRow({ label, value, max }) {
 
 // ---------------- Historial ----------------
 
-function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado }) {
+function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado, onConfirmar }) {
   const [payingId, setPayingId] = useState(null);
   const [payMethodChoice, setPayMethodChoice] = useState("efectivo");
   const totalHoy = sales.filter((s) => new Date(s.date).toDateString() === new Date().toDateString() && !s.pending).reduce((a, s) => a + s.total, 0);
-  const pendientes = sales.filter((s) => s.pending);
+  const sinConfirmar = sales.filter((s) => s.origen === "catalogo" && !s.confirmado);
+  const pendientes = sales.filter((s) => s.pending && !(s.origen === "catalogo" && !s.confirmado));
   const cobradas = sales.filter((s) => !s.pending);
 
   return (
@@ -2068,6 +2210,34 @@ function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado }) 
         <MetricCard label="Ventas totales" value={cobradas.length} />
         <MetricCard label="Vendido hoy" value={"$" + fmt(totalHoy)} />
       </div>
+
+      {sinConfirmar.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.rojo, marginBottom: 8 }}>PEDIDOS NUEVOS DEL CATÁLOGO (SIN CONFIRMAR)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {sinConfirmar.map((s) => (
+              <div key={s.id} style={{ background: "#FDECEC", border: "1px solid #F0C9C9", borderRadius: 12, padding: "10px 12px" }}>
+                <button onClick={() => onView(s)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 700 }}>Pedido #{s.number}{s.cliente ? ` · ${s.cliente}` : ""}</div>
+                    <div style={{ fontSize: 12, color: "#8AA2BC" }}>
+                      {new Date(s.date).toLocaleString("es-AR")}
+                      {s.metodoPrevisto ? ` · Eligió: ${methodLabel[s.metodoPrevisto] || s.metodoPrevisto}` : ""}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.rojo }}>${fmt(s.total)}</div>
+                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => onConfirmar(s.id)} style={{ ...btn("primario", "sm"), flex: 1 }}>
+                    <Check size={13} /> Confirmar pedido
+                  </button>
+                  <IconBtn danger onClick={() => { if (confirm(`¿Eliminar el pedido #${s.number}? Esto devuelve el stock.`)) onDelete(s.id); }}><Trash2 size={13} /></IconBtn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {pendientes.length > 0 && (
         <div style={{ marginBottom: 18 }}>
@@ -2078,7 +2248,7 @@ function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado }) 
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <button onClick={() => onView(s)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div>
-                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Pedido #{s.number}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Pedido #{s.number}{s.cliente ? ` · ${s.cliente}` : ""}</div>
                       <div style={{ fontSize: 12, color: "#8AA2BC" }}>{new Date(s.date).toLocaleString("es-AR")}{s.employeeName ? ` · ${s.employeeName}` : ""}</div>
                     </div>
                     <div style={{ fontSize: 15, fontWeight: 700, color: "#A85C06", marginRight: 8 }}>${fmt(s.total)}</div>
@@ -2094,7 +2264,7 @@ function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado }) 
                     <button onClick={() => setPayingId(null)} style={btn("terciario", "sm")}>Cancelar</button>
                   </div>
                 ) : (
-                  <button onClick={() => setPayingId(s.id)} style={{ ...btn("secundario", "sm"), width: "100%", marginTop: 8 }}>
+                  <button onClick={() => { setPayingId(s.id); setPayMethodChoice(s.metodoPrevisto || "efectivo"); }} style={{ ...btn("secundario", "sm"), width: "100%", marginTop: 8 }}>
                     <DollarSign size={13} /> Marcar como pagado
                   </button>
                 )}
@@ -2104,7 +2274,7 @@ function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado }) 
         </div>
       )}
 
-      {cobradas.length === 0 && pendientes.length === 0 && <EmptyState text="Todavía no registraste ninguna venta." />}
+      {cobradas.length === 0 && pendientes.length === 0 && sinConfirmar.length === 0 && <EmptyState text="Todavía no registraste ninguna venta." />}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {cobradas.map((s) => (
           <div key={s.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
@@ -2423,6 +2593,25 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
 
       <Field label="Nombre"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ej: Detergente 1L" style={inputStyle} /></Field>
       <ProductPhotoField form={form} setForm={setForm} onUploadImage={onUploadImage} />
+      <Field label="Descripción (opcional, ej: fragancias disponibles)">
+        <textarea
+          value={form.description || ""} onChange={(e) => setForm({ ...form, description: e.target.value })}
+          placeholder="Ej: Disponible en Lavanda, Limón y Floral" style={{ ...inputStyle, minHeight: 60, resize: "vertical" }}
+        />
+      </Field>
+      <div style={{ background: form.enOferta ? "#FDECEC" : "#F2F6FB", border: `1px solid ${form.enOferta ? "#F0C9C9" : "#E1EAF4"}`, borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: form.enOferta ? C.rojo : C.texto, cursor: "pointer" }}>
+          <input type="checkbox" checked={!!form.enOferta} onChange={(e) => setForm({ ...form, enOferta: e.target.checked })} />
+          Está en oferta
+        </label>
+        {form.enOferta && (
+          <div style={{ marginTop: 8 }}>
+            <Field label="Precio de oferta">
+              <input type="number" min="0" step="0.01" value={form.precioOferta || ""} onChange={(e) => setForm({ ...form, precioOferta: e.target.value })} placeholder="0.00" style={inputStyle} />
+            </Field>
+          </div>
+        )}
+      </div>
       <Field label="Código de barras (opcional)">
         <input value={form.barcode || ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} placeholder="Escaneá el producto con la pistola acá" style={inputStyle} />
       </Field>

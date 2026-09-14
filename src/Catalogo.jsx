@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ShoppingCart, Search, Plus, Minus, X, Image as ImageIcon, Trash2 } from "lucide-react";
-import { getData } from "./lib/storage";
+import { getData, setData } from "./lib/storage";
 import { C, btn, card, chip as chipStyle, input as inputBase } from "./ui";
 
 // Número de WhatsApp del local, con código de país, sin "+" ni espacios.
@@ -9,6 +9,8 @@ const WHATSAPP_NUMBER = "5493515940308";
 const sans = "Nunito, system-ui, -apple-system, sans-serif";
 const fmt = (n) => Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const methodLabel = { efectivo: "Efectivo", transferencia: "Transferencia", debito: "Débito", credito: "Crédito", mercadopago: "Mercado Pago / QR", otros: "Otros" };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const precioEfectivo = (p) => (p.enOferta && p.precioOferta > 0 ? p.precioOferta : p.price);
 
 export default function Catalogo() {
   const [loaded, setLoaded] = useState(false);
@@ -22,6 +24,7 @@ export default function Catalogo() {
   const [cliente, setCliente] = useState("");
   const [payMethod, setPayMethod] = useState("efectivo");
   const [enviado, setEnviado] = useState(false);
+  const [enviando, setEnviando] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -83,13 +86,13 @@ export default function Catalogo() {
   const cartItems = Object.entries(cart)
     .map(([id, qty]) => ({ product: products.find((p) => p.id === id), qty }))
     .filter((i) => i.product);
-  const cartTotal = cartItems.reduce((a, i) => a + i.product.price * i.qty, 0);
+  const cartTotal = cartItems.reduce((a, i) => a + precioEfectivo(i.product) * i.qty, 0);
   const cartCount = cartItems.reduce((a, i) => a + i.qty, 0);
 
   const mensajeWhatsapp = () => {
     let msg = "Hola! Quiero hacer este pedido:\n\n";
     cartItems.forEach((i) => {
-      msg += `${i.qty}x ${i.product.name} - $${fmt(i.product.price * i.qty)}\n`;
+      msg += `${i.qty}x ${i.product.name} - $${fmt(precioEfectivo(i.product) * i.qty)}\n`;
     });
     msg += `\nTotal: $${fmt(cartTotal)}\n`;
     msg += `Forma de pago: ${methodLabel[payMethod]}\n`;
@@ -97,7 +100,54 @@ export default function Catalogo() {
     return msg;
   };
 
-  const enviarPedido = () => {
+  const guardarPedidoEnApp = async () => {
+    try {
+      let freshProducts = products;
+      let freshSales = [];
+      const fp = await getData("products");
+      if (fp !== null && fp !== undefined) freshProducts = fp;
+      const fs = await getData("sales");
+      if (fs !== null && fs !== undefined) freshSales = fs;
+
+      const nextNumber = freshSales.length + 1;
+      const sale = {
+        id: uid(),
+        number: nextNumber,
+        date: new Date().toISOString(),
+        employeeId: null,
+        employeeName: null,
+        cliente: cliente.trim(),
+        origen: "catalogo",
+        confirmado: false,
+        pending: true,
+        method: null,
+        metodoPrevisto: payMethod,
+        items: cartItems.map((i) => ({
+          productId: i.product.id, name: i.product.name, price: precioEfectivo(i.product), qty: i.qty,
+          modifiers: [], categoryId: i.product.categoryId || null,
+        })),
+        subtotal: cartTotal,
+        discountType: null,
+        discountValue: 0,
+        discountAmount: 0,
+        total: cartTotal,
+      };
+      const nextSales = [sale, ...freshSales];
+      const nextProducts = freshProducts.map((p) => {
+        const item = cartItems.find((i) => i.product.id === p.id);
+        return item ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p;
+      });
+      await setData("sales", nextSales);
+      await setData("products", nextProducts);
+    } catch (e) {
+      console.error("No se pudo guardar el pedido en la app:", e);
+    }
+  };
+
+  const enviarPedido = async () => {
+    setEnviando(true);
+    await guardarPedidoEnApp();
+    setEnviando(false);
     const texto = encodeURIComponent(mensajeWhatsapp());
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${texto}`, "_blank");
     setEnviado(true);
@@ -153,7 +203,10 @@ export default function Catalogo() {
                     .map((p) => {
                       const qty = cart[p.id] || 0;
                       return (
-                        <div key={p.id} style={{ ...card(), padding: 10, display: "flex", flexDirection: "column" }}>
+                        <div key={p.id} style={{ ...card(), padding: 10, display: "flex", flexDirection: "column", position: "relative" }}>
+                          {p.enOferta && (
+                            <div style={{ position: "absolute", top: 16, left: 16, background: C.rojo, color: "#fff", fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 6, zIndex: 1 }}>OFERTA</div>
+                          )}
                           {p.imageUrl ? (
                             <img src={p.imageUrl} alt={p.name} style={{ width: "100%", height: 110, objectFit: "cover", borderRadius: 8, marginBottom: 8 }} />
                           ) : (
@@ -161,8 +214,19 @@ export default function Catalogo() {
                               <ImageIcon size={24} style={{ color: C.textoTenue }} />
                             </div>
                           )}
-                          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, flex: 1 }}>{p.name}</div>
-                          <div style={{ fontSize: 17, fontWeight: 900, color: C.azul, marginBottom: 8 }}>${fmt(p.price)}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>{p.name}</div>
+                          {p.description && (
+                            <div style={{ fontSize: 11, color: C.textoTenue, marginBottom: 4, lineHeight: 1.3 }}>{p.description}</div>
+                          )}
+                          <div style={{ flex: 1 }} />
+                          {p.enOferta ? (
+                            <div style={{ marginBottom: 8 }}>
+                              <span style={{ fontSize: 12, color: C.textoTenue, textDecoration: "line-through", marginRight: 6 }}>${fmt(p.price)}</span>
+                              <span style={{ fontSize: 17, fontWeight: 900, color: C.rojo }}>${fmt(p.precioOferta)}</span>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 17, fontWeight: 900, color: C.azul, marginBottom: 8 }}>${fmt(p.price)}</div>
+                          )}
                           {qty > 0 ? (
                             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, background: C.azulSuave, borderRadius: 10, padding: "4px 6px" }}>
                               <button onClick={() => changeQty(p.id, -1)} style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={14} /></button>
@@ -207,7 +271,7 @@ export default function Catalogo() {
                   <div key={i.product.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #EDF2F8" }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 600 }}>{i.product.name}</div>
-                      <div style={{ fontSize: 12, color: C.textoTenue }}>${fmt(i.product.price)} c/u</div>
+                      <div style={{ fontSize: 12, color: C.textoTenue }}>${fmt(precioEfectivo(i.product))} c/u</div>
                     </div>
                     <button onClick={() => changeQty(i.product.id, -1)} style={{ width: 26, height: 26, borderRadius: 7, border: "1px solid #DBE6F2", background: "#fff" }}><Minus size={13} /></button>
                     <span style={{ fontSize: 13.5, fontWeight: 700, minWidth: 18, textAlign: "center" }}>{i.qty}</span>
@@ -229,8 +293,8 @@ export default function Catalogo() {
                   </select>
                 </Field>
 
-                <button onClick={enviarPedido} disabled={!cliente.trim()} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8, opacity: cliente.trim() ? 1 : 0.5 }}>
-                  Enviar pedido por WhatsApp
+                <button onClick={enviarPedido} disabled={!cliente.trim() || enviando} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8, opacity: cliente.trim() && !enviando ? 1 : 0.5 }}>
+                  {enviando ? "Enviando..." : "Enviar pedido por WhatsApp"}
                 </button>
               </>
             ) : (
