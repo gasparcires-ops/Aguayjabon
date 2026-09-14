@@ -973,7 +973,7 @@ export default function PuntoDeVenta() {
           />
         )}
         {tab === "resumen" && (
-          <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} />
+          <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} methodLabel={methodLabel} />
         )}
         {tab === "presupuestos" && (
           <PresupuestosTab products={products} presupuestos={presupuestos} onGenerar={generarPresupuesto} onVer={setPresupuestoGenerado} onEliminar={eliminarPresupuesto} />
@@ -1716,7 +1716,7 @@ function EmptyState({ text }) {
 
 // ---------------- Resumen ----------------
 
-function inRange(dateStr, range) {
+function inRange(dateStr, range, desde, hasta) {
   const d = new Date(dateStr);
   const now = new Date();
   if (range === "hoy") return d.toDateString() === now.toDateString();
@@ -1725,6 +1725,17 @@ function inRange(dateStr, range) {
     return d >= start;
   }
   if (range === "mes") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  if (range === "personalizado") {
+    if (desde) {
+      const desdeDate = new Date(desde + "T00:00:00");
+      if (d < desdeDate) return false;
+    }
+    if (hasta) {
+      const hastaDate = new Date(hasta + "T23:59:59");
+      if (d > hastaDate) return false;
+    }
+    return true;
+  }
   return true;
 }
 
@@ -1896,9 +1907,11 @@ function PresupuestoModal({ presupuesto, onClose }) {
   );
 }
 
-function ResumenTab({ sales, categories, employees, range, setRange, products }) {
+function ResumenTab({ sales, categories, employees, range, setRange, products, methodLabel }) {
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
   const pendingCount = sales.filter((s) => s.pending).length;
-  const filtered = sales.filter((s) => inRange(s.date, range) && !s.pending);
+  const filtered = sales.filter((s) => inRange(s.date, range, desde, hasta) && !s.pending);
   const total = filtered.reduce((a, s) => a + s.total, 0);
   const count = filtered.length;
 
@@ -1941,10 +1954,21 @@ function ResumenTab({ sales, categories, employees, range, setRange, products })
   return (
     <div>
       <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" }}>
-        {[["hoy", "Hoy"], ["semana", "7 días"], ["mes", "Este mes"], ["todo", "Todo"]].map(([id, label]) => (
+        {[["hoy", "Hoy"], ["semana", "7 días"], ["mes", "Este mes"], ["todo", "Todo"], ["personalizado", "Elegir fechas"]].map(([id, label]) => (
           <Chip key={id} active={range === id} onClick={() => setRange(id)}>{label}</Chip>
         ))}
       </div>
+
+      {range === "personalizado" && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+          <Field label="Desde" style={{ flex: 1, minWidth: 150 }}>
+            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} style={inputStyle} />
+          </Field>
+          <Field label="Hasta" style={{ flex: 1, minWidth: 150 }}>
+            <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} style={inputStyle} />
+          </Field>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
         <MetricCard label="Ventas" value={count} />
@@ -1975,7 +1999,7 @@ function ResumenTab({ sales, categories, employees, range, setRange, products })
 
           <Section title="Por forma de pago">
             {Object.entries(byMethod).sort((a, b) => b[1] - a[1]).map(([m, val]) => (
-              <BarRow key={m} label={{ efectivo: "Efectivo", tarjeta: "Tarjeta", transferencia: "Transferencia" }[m] || m} value={val} max={Math.max(...Object.values(byMethod))} />
+              <BarRow key={m} label={methodLabel[m] || m} value={val} max={Math.max(...Object.values(byMethod))} />
             ))}
           </Section>
 
