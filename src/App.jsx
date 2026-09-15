@@ -19,6 +19,7 @@ const mono = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospac
 const fmt = (n) =>
   Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const precioVenta = (p) => (p && p.enOferta && p.precioOferta > 0 ? p.precioOferta : p ? p.price : 0);
 
 export default function PuntoDeVenta() {
   const [loaded, setLoaded] = useState(false);
@@ -369,7 +370,7 @@ export default function PuntoDeVenta() {
       if (existing) {
         return prev.map((l) => (l.lineId === existing.lineId ? { ...l, qty: l.qty + 1 } : l));
       }
-      return [...prev, { lineId: uid(), productId: product.id, name: product.name, price: product.price, modifiers, qty: 1 }];
+      return [...prev, { lineId: uid(), productId: product.id, name: product.name, price: precioVenta(product), modifiers, qty: 1 }];
     });
   };
 
@@ -1274,12 +1275,24 @@ function VenderTab({
                 boxShadow: qty > 0 ? "0 2px 10px rgba(27,79,156,0.10)" : "none",
               }}>
                 {hasMods && <Sliders size={13} style={{ position: "absolute", top: 12, right: 12, color: "#8AA2BC" }} />}
+                {p.enOferta && (
+                  <div style={{ position: "absolute", top: 12, left: 12, background: "#B0242A", color: "#fff", fontSize: 9.5, fontWeight: 900, letterSpacing: "0.05em", padding: "3px 7px", borderRadius: 6 }}>
+                    OFERTA
+                  </div>
+                )}
                 <button
                   onClick={() => !outOfStock && onProductTap(p)} disabled={outOfStock}
                   style={{ textAlign: "left", background: "none", border: "none", padding: 0, cursor: outOfStock ? "default" : "pointer" }}
                 >
                   <div style={{ fontSize: 14.5, fontWeight: 700, marginBottom: 5, lineHeight: 1.25, color: "#10243D" }}>{p.name}</div>
-                  <div style={{ fontSize: 21, fontWeight: 800, color: "#1B4F9C", marginBottom: 5 }}>${fmt(p.price)}</div>
+                  {p.enOferta ? (
+                    <div style={{ marginBottom: 5 }}>
+                      <span style={{ fontSize: 13, color: "#8AA2BC", textDecoration: "line-through", marginRight: 6 }}>${fmt(p.price)}</span>
+                      <span style={{ fontSize: 21, fontWeight: 800, color: "#B0242A" }}>${fmt(p.precioOferta)}</span>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 21, fontWeight: 800, color: "#1B4F9C", marginBottom: 5 }}>${fmt(p.price)}</div>
+                  )}
                 </button>
                 <div>
                   <span style={badgeStock(p.stock, LOW_STOCK).estilo}>{badgeStock(p.stock, LOW_STOCK).texto}</span>
@@ -1900,7 +1913,7 @@ function PresupuestosTab({ products, presupuestos, onGenerar, onVer, onEliminar 
   const items = products
     .map((p) => ({ product: p, cantidad: qty[p.id] || 0 }))
     .filter((i) => i.cantidad > 0)
-    .map((i) => ({ name: i.product.name, cantidad: i.cantidad, precio: i.product.price, subtotal: i.product.price * i.cantidad }));
+    .map((i) => ({ name: i.product.name, cantidad: i.cantidad, precio: precioVenta(i.product), subtotal: precioVenta(i.product) * i.cantidad }));
 
   const total = items.reduce((a, i) => a + i.subtotal, 0);
 
@@ -1939,7 +1952,7 @@ function PresupuestosTab({ products, presupuestos, onGenerar, onVer, onEliminar 
               <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 4px", borderBottom: "1px solid #EDF2F8" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                  <div style={{ fontSize: 11.5, color: C.textoTenue }}>${fmt(p.price)}</div>
+                  <div style={{ fontSize: 11.5, color: C.textoTenue }}>${fmt(precioVenta(p))}{p.enOferta && <span style={{ textDecoration: "line-through", marginLeft: 5 }}>${fmt(p.price)}</span>}</div>
                 </div>
                 <input
                   type="number" min="0" value={qty[p.id] || ""} onChange={(e) => setQtyFor(p.id, e.target.value)}
