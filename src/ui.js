@@ -27,6 +27,11 @@ export const C = {
   blanco: "#FFFFFF",
   borde: "#E1EAF4",
   bordeFuerte: "#DBE6F2",
+
+  // agregados para el catálogo público
+  fotoFondo: "#F7FAFD",
+  celesteClaro: "#9FD8F4",
+  azulApagado: "#9FB6D6",
 };
 
 // ── Tipografía ─────────────────────────────────────────────────

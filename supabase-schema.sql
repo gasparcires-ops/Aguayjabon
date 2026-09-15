@@ -20,3 +20,19 @@ on store_data
 for all
 using (true)
 with check (true);
+
+-- Fotos de productos: el bucket "productos" se crea a mano desde
+-- Storage > New bucket (marcado como público), y estas políticas le
+-- dan permiso a la app para leer, subir y reemplazar imágenes ahí.
+
+create policy "Permitir leer fotos de productos"
+on storage.objects for select to public
+using (bucket_id = 'productos');
+
+create policy "Permitir subir fotos de productos"
+on storage.objects for insert to public
+with check (bucket_id = 'productos');
+
+create policy "Permitir reemplazar fotos de productos"
+on storage.objects for update to public
+using (bucket_id = 'productos');
