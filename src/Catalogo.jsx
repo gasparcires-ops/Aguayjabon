@@ -16,11 +16,60 @@ const methodLabel = { efectivo: "Efectivo", transferencia: "Transferencia", debi
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
+// ---- búsqueda tolerante a errores de tipeo ----
+function distancia(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const costo = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + costo);
+    }
+  }
+  return dp[m][n];
+}
+function puntajeTexto(query, texto) {
+  const q = norm(query.trim());
+  if (!q) return 0;
+  const t = norm(texto || "");
+  if (!t) return Infinity;
+  if (t.includes(q)) return 0;
+  const palabrasT = t.split(/\s+/).filter(Boolean);
+  const palabrasQ = q.split(/\s+/).filter(Boolean);
+  let total = 0;
+  for (const pq of palabrasQ) {
+    let mejor = Infinity;
+    for (const pt of palabrasT) {
+      if (pt.includes(pq) || pq.includes(pt)) { mejor = Math.min(mejor, 1); continue; }
+      const tol = pq.length <= 4 ? 1 : pq.length <= 7 ? 2 : 3;
+      const d = distancia(pq, pt);
+      if (d <= tol) mejor = Math.min(mejor, 2 + d);
+    }
+    if (mejor === Infinity) return Infinity;
+    total += mejor;
+  }
+  return total;
+}
+function puntajeProducto(query, p, subcat) {
+  const enNombre = puntajeTexto(query, p.name);
+  const enCategoria = puntajeTexto(query, subcat) + 0.5;
+  const enDescripcion = p.description ? puntajeTexto(query, p.description) + 1 : Infinity;
+  return Math.min(enNombre, enCategoria, enDescripcion);
+}
+
 // Opciones de diseño (ver README del handoff)
 const OPCIONES = { vistaDefault: "grid", subsecciones: true, mostrarPromos: true };
 
 const MIS_PEDIDOS_KEY = "aguayjabon_mis_pedidos";
 const CACHE_KEY = "aguayjabon_catalogo_cache";
+
+// ---- carrito: líneas por producto + variante elegida (igual que en la app interna) ----
+const lineSig = (productId, modifiers) => productId + "|" + (modifiers || []).map((m) => m.name).sort().join(",");
+const precioLinea = (product, modifiers) => precioEfectivo(product) + (modifiers || []).reduce((a, m) => a + (m.price || 0), 0);
 
 export default function Catalogo() {
   const [loaded, setLoaded] = useState(false);
@@ -38,9 +87,10 @@ export default function Catalogo() {
     try { return localStorage.getItem("aguayjabon_vista") || OPCIONES.vistaDefault; } catch (e) { return OPCIONES.vistaDefault; }
   });
 
-  const [cart, setCart] = useState({});
+  const [cart, setCart] = useState([]); // [{ lineId, productId, modifiers, qty }]
   const [hoja, setHoja] = useState(null);
   const [pick, setPick] = useState(1);
+  const [modifierPick, setModifierPick] = useState(null);
   const [pedido, setPedido] = useState(false);
   const [enviado, setEnviado] = useState(false);
   const [enviando, setEnviando] = useState(false);
@@ -111,27 +161,41 @@ export default function Catalogo() {
     .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" })), [groups, disponibles, categories]);
 
   // ---- carrito ----
-  const add = (id, n = 1) => {
-    setCart((c) => ({ ...c, [id]: (c[id] || 0) + n }));
-    const p = products.find((x) => x.id === id);
-    if (p) showToast(`${p.name.split(" ").slice(0, 3).join(" ")} agregado`);
+  const add = (productId, modifiers = [], n = 1) => {
+    const producto = products.find((p) => p.id === productId);
+    setCart((c) => {
+      const sig = lineSig(productId, modifiers);
+      const idx = c.findIndex((l) => lineSig(l.productId, l.modifiers) === sig);
+      if (idx >= 0) {
+        const copy = [...c];
+        copy[idx] = { ...copy[idx], qty: copy[idx].qty + n };
+        return copy;
+      }
+      return [...c, { lineId: uid(), productId, modifiers, qty: n }];
+    });
+    if (producto) showToast(`${producto.name.split(" ").slice(0, 3).join(" ")} agregado`);
   };
-  const dec = (id) => setCart((c) => {
-    const next = (c[id] || 0) - 1;
-    const copy = { ...c };
-    if (next <= 0) delete copy[id]; else copy[id] = next;
+  const dec = (lineId) => setCart((c) => {
+    const idx = c.findIndex((l) => l.lineId === lineId);
+    if (idx < 0) return c;
+    const next = c[idx].qty - 1;
+    if (next <= 0) return c.filter((l) => l.lineId !== lineId);
+    const copy = [...c];
+    copy[idx] = { ...copy[idx], qty: next };
     return copy;
   });
-  const setQty = (id, n) => setCart((c) => {
-    const copy = { ...c };
-    if (n <= 0) delete copy[id]; else copy[id] = n;
-    return copy;
-  });
+  // dec/add rápidos desde una tarjeta (sin variantes): operan sobre la única línea sin modificadores de ese producto
+  const decProducto = (productId) => {
+    const linea = cart.find((l) => l.productId === productId && (!l.modifiers || l.modifiers.length === 0));
+    if (linea) dec(linea.lineId);
+  };
+  const addProducto = (productId) => add(productId, []);
+  const qtyDeProducto = (productId) => cart.filter((l) => l.productId === productId && (!l.modifiers || l.modifiers.length === 0)).reduce((a, l) => a + l.qty, 0);
 
-  const cartItems = useMemo(() => Object.entries(cart)
-    .map(([id, qty]) => ({ product: products.find((p) => p.id === id), qty }))
-    .filter((i) => i.product), [cart, products]);
-  const cartTotal = cartItems.reduce((a, i) => a + precioEfectivo(i.product) * i.qty, 0);
+  const cartItems = useMemo(() => cart
+    .map((l) => ({ ...l, product: products.find((p) => p.id === l.productId) }))
+    .filter((l) => l.product), [cart, products]);
+  const cartTotal = cartItems.reduce((a, i) => a + precioLinea(i.product, i.modifiers) * i.qty, 0);
   const cartCount = cartItems.reduce((a, i) => a + i.qty, 0);
 
   // ---- "los más pedidos" (últimos 30 días, calculado de sales) ----
@@ -149,7 +213,6 @@ export default function Catalogo() {
       .slice(0, 8)
       .map((x) => x.product);
     if (top.length >= 4) return top;
-    // fallback: primeros disponibles
     const relleno = disponibles.filter((p) => !top.includes(p)).slice(0, 8 - top.length);
     return [...top, ...relleno];
   }, [sales, disponibles]);
@@ -159,12 +222,14 @@ export default function Catalogo() {
   // ---- pedido anterior (guardado en este dispositivo) ----
   const ultimoPedido = misPedidos[0] || null;
   const repetirPedido = (pedidoGuardado) => {
-    const nuevoCart = {};
+    const nuevasLineas = [];
     (pedidoGuardado.items || []).forEach((it) => {
       const p = products.find((x) => x.id === it.productId);
-      if (p && p.price > 0 && p.stock > 0) nuevoCart[it.productId] = it.qty;
+      if (p && p.price > 0 && p.stock > 0) {
+        nuevasLineas.push({ lineId: uid(), productId: it.productId, modifiers: it.modifiers || [], qty: it.qty });
+      }
     });
-    setCart(nuevoCart);
+    setCart(nuevasLineas);
     setPant("home");
     showToast("Pedido agregado al carrito");
   };
@@ -194,8 +259,8 @@ export default function Catalogo() {
         metodoPrevisto: pago,
         nota: notas.trim(),
         items: cartItems.map((i) => ({
-          productId: i.product.id, name: i.product.name, price: precioEfectivo(i.product), qty: i.qty,
-          modifiers: [], categoryId: i.product.categoryId || null,
+          productId: i.product.id, name: i.product.name, price: precioLinea(i.product, i.modifiers), qty: i.qty,
+          modifiers: i.modifiers || [], categoryId: i.product.categoryId || null,
         })),
         subtotal: cartTotal,
         discountType: null,
@@ -205,8 +270,8 @@ export default function Catalogo() {
       };
       const nextSales = [sale, ...freshSales];
       const nextProducts = freshProducts.map((p) => {
-        const item = cartItems.find((i) => i.product.id === p.id);
-        return item ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p;
+        const cantidadVendida = cartItems.filter((i) => i.product.id === p.id).reduce((a, i) => a + i.qty, 0);
+        return cantidadVendida > 0 ? { ...p, stock: Math.max(0, p.stock - cantidadVendida) } : p;
       });
       await setData("sales", nextSales);
       await setData("products", nextProducts);
@@ -224,7 +289,8 @@ export default function Catalogo() {
   const mensajeWhatsapp = () => {
     let msg = "Hola! Quiero hacer este pedido:\n\n";
     cartItems.forEach((i) => {
-      msg += `${i.qty}x ${i.product.name} - $${fmt(precioEfectivo(i.product) * i.qty)}\n`;
+      const variante = (i.modifiers || []).length > 0 ? ` (${i.modifiers.map((m) => m.name).join(", ")})` : "";
+      msg += `${i.qty}x ${i.product.name}${variante} - $${fmt(precioLinea(i.product, i.modifiers) * i.qty)}\n`;
     });
     msg += `\nTotal: $${fmt(cartTotal)}\n`;
     msg += `Forma de pago: ${methodLabel[pago]}\n`;
@@ -244,12 +310,22 @@ export default function Catalogo() {
   };
 
   const seguirComprando = () => {
-    setPedido(false); setEnviado(false); setCart({}); setNombre(""); setNotas("");
+    setPedido(false); setEnviado(false); setCart([]); setNombre(""); setNotas("");
     setPant("home");
   };
 
   const abrirGrupo = (id) => { setGrupo(id); setSub("all"); setOrden("rel"); setPant("grupo"); };
-  const abrirFicha = (productId) => { setHoja(productId); setPick(Math.max(1, cart[productId] || 1)); };
+  const abrirFicha = (productId) => {
+    setHoja(productId);
+    setPick(1);
+    setModifierPick(null);
+  };
+  const agregarDesdeFicha = () => {
+    const producto = products.find((p) => p.id === hoja);
+    if (producto && producto.modifiers && producto.modifiers.length > 0 && !modifierPick) return; // falta elegir variante
+    add(hoja, modifierPick ? [modifierPick] : [], pick);
+    setHoja(null);
+  };
 
   if (!loaded) {
     return <SkeletonHome />;
@@ -272,7 +348,7 @@ export default function Catalogo() {
           <HomeScreen
             categorias={categories} grupos={gruposDisponibles} disponibles={disponibles}
             masPedidos={masPedidos} ofertas={ofertas} ultimoPedido={ultimoPedido}
-            cart={cart} onAdd={add} onDec={dec} onOpenFicha={abrirFicha} onAbrirGrupo={abrirGrupo}
+            qtyDeProducto={qtyDeProducto} onAdd={addProducto} onDec={decProducto} onOpenFicha={abrirFicha} onAbrirGrupo={abrirGrupo}
             onIrBuscar={() => setPant("buscar")} onRepetir={repetirPedido}
             catName={catName}
           />
@@ -281,14 +357,14 @@ export default function Catalogo() {
           <GrupoScreen
             grupoId={grupo} groups={groups} categories={categories} disponibles={disponibles}
             sub={sub} setSub={setSub} orden={orden} setOrden={setOrden} vista={vista} setVista={setVista}
-            cart={cart} onAdd={add} onDec={dec} onOpenFicha={abrirFicha}
+            qtyDeProducto={qtyDeProducto} onAdd={addProducto} onDec={decProducto} onOpenFicha={abrirFicha}
             onVolver={() => setPant("home")} catName={catName} catGroupId={catGroupId}
             subsecciones={OPCIONES.subsecciones}
           />
         )}
         {pant === "buscar" && (
           <BuscarScreen
-            disponibles={disponibles} q={q} setQ={setQ} cart={cart} onAdd={add} onDec={dec}
+            disponibles={disponibles} q={q} setQ={setQ} qtyDeProducto={qtyDeProducto} onAdd={addProducto} onDec={decProducto}
             onOpenFicha={abrirFicha} onVolver={() => setPant("home")} catName={catName}
           />
         )}
@@ -303,7 +379,7 @@ export default function Catalogo() {
         <button onClick={() => setPedido(true)} style={{
           position: "fixed", left: 14, right: 14, bottom: 98, height: 60, borderRadius: 17, background: C.azul,
           border: "none", boxShadow: "0 12px 26px rgba(15,62,134,.34)", display: "flex", alignItems: "center",
-          justifyContent: "space-between", padding: "0 18px", zIndex: 40, animation: "none",
+          justifyContent: "space-between", padding: "0 18px", zIndex: 40,
         }}>
           <div style={{ textAlign: "left" }}>
             <div style={{ fontSize: 15, fontWeight: 900, color: "#fff" }}>${fmt(cartTotal)}</div>
@@ -325,19 +401,20 @@ export default function Catalogo() {
       {productoFicha && (
         <FichaModal
           product={productoFicha} subcat={catName(productoFicha.categoryId)} groupNameTxt={groupName(catGroupId(productoFicha.categoryId))}
-          pick={pick} setPick={setPick}
+          pick={pick} setPick={setPick} modifierPick={modifierPick} setModifierPick={setModifierPick}
           onClose={() => setHoja(null)}
-          onAgregar={() => { add(productoFicha.id, pick); setHoja(null); }}
+          onAgregar={agregarDesdeFicha}
         />
       )}
 
       {pedido && (
         <PedidoModal
           cartItems={cartItems} cartTotal={cartTotal} disponibles={disponibles}
-          onAdd={add} onDec={dec} onSetQty={setQty}
+          onAdd={(productId, modifiers) => add(productId, modifiers || [], 1)} onDec={dec}
+          onOpenFicha={(id) => { setPedido(false); abrirFicha(id); }}
           nombre={nombre} setNombre={setNombre} pago={pago} setPago={setPago} notas={notas} setNotas={setNotas}
           enviado={enviado} enviando={enviando} onEnviar={enviarPedido} onCerrar={() => setPedido(false)}
-          onVaciar={() => setCart({})} onSeguirComprando={seguirComprando}
+          onVaciar={() => setCart([])} onSeguirComprando={seguirComprando}
         />
       )}
     </div>
@@ -346,7 +423,7 @@ export default function Catalogo() {
 
 // ==================== INICIO ====================
 
-function HomeScreen({ categorias, grupos, disponibles, masPedidos, ofertas, ultimoPedido, cart, onAdd, onDec, onOpenFicha, onAbrirGrupo, onIrBuscar, onRepetir, catName }) {
+function HomeScreen({ categorias, grupos, disponibles, masPedidos, ofertas, ultimoPedido, qtyDeProducto, onAdd, onDec, onOpenFicha, onAbrirGrupo, onIrBuscar, onRepetir, catName }) {
   return (
     <div>
       <div style={{ background: "#fff", borderBottom: `1.5px solid ${C.borde}`, padding: "56px 16px 14px" }}>
@@ -402,7 +479,7 @@ function HomeScreen({ categorias, grupos, disponibles, masPedidos, ofertas, ulti
           <Riel titulo="Los más pedidos" onVerTodo={() => onAbrirGrupo("todo")}>
             {masPedidos.map((p) => (
               <div key={p.id} style={{ width: 150, flexShrink: 0 }}>
-                <ProductCard product={p} subcat={catName(p.categoryId)} qty={cart[p.id] || 0} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
+                <ProductCard product={p} subcat={catName(p.categoryId)} qty={qtyDeProducto(p.id)} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
               </div>
             ))}
           </Riel>
@@ -433,7 +510,7 @@ function HomeScreen({ categorias, grupos, disponibles, masPedidos, ofertas, ulti
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
               {ofertas.map((p) => (
-                <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={cart[p.id] || 0} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
+                <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={qtyDeProducto(p.id)} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
               ))}
             </div>
           </div>
@@ -449,7 +526,7 @@ function HomeScreen({ categorias, grupos, disponibles, masPedidos, ofertas, ulti
             <Riel key={g.id} titulo={g.name} onVerTodo={() => onAbrirGrupo(g.id)}>
               {productosDelGrupo.map((p) => (
                 <div key={p.id} style={{ width: 150, flexShrink: 0 }}>
-                  <ProductCard product={p} subcat={catName(p.categoryId)} qty={cart[p.id] || 0} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
+                  <ProductCard product={p} subcat={catName(p.categoryId)} qty={qtyDeProducto(p.id)} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
                 </div>
               ))}
             </Riel>
@@ -489,7 +566,7 @@ function Riel({ titulo, onVerTodo, children }) {
 
 // ==================== RUBRO (GRUPO) ====================
 
-function GrupoScreen({ grupoId, groups, categories, disponibles, sub, setSub, orden, setOrden, vista, setVista, cart, onAdd, onDec, onOpenFicha, onVolver, catName, catGroupId, subsecciones }) {
+function GrupoScreen({ grupoId, groups, categories, disponibles, sub, setSub, orden, setOrden, vista, setVista, qtyDeProducto, onAdd, onDec, onOpenFicha, onVolver, catName, catGroupId, subsecciones }) {
   const esTodo = grupoId === "todo";
   const grupoObj = esTodo ? null : groups.find((g) => g.id === grupoId);
   const nombreGrupo = esTodo ? "Todo el catálogo" : (grupoObj ? grupoObj.name : "Otros artículos");
@@ -553,7 +630,7 @@ function GrupoScreen({ grupoId, groups, categories, disponibles, sub, setSub, or
         {vista === "lista" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
             {productos.map((p) => (
-              <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={cart[p.id] || 0} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="lista" />
+              <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={qtyDeProducto(p.id)} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="lista" />
             ))}
           </div>
         ) : subsecciones && !vistaPlana ? (
@@ -562,7 +639,7 @@ function GrupoScreen({ grupoId, groups, categories, disponibles, sub, setSub, or
               <div style={{ fontSize: 11.5, fontWeight: 900, color: C.textoSuave, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: 8 }}>{cname}</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
                 {porCategoria[cname].map((p) => (
-                  <ProductCard key={p.id} product={p} subcat={null} qty={cart[p.id] || 0} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
+                  <ProductCard key={p.id} product={p} subcat={null} qty={qtyDeProducto(p.id)} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
                 ))}
               </div>
             </div>
@@ -570,7 +647,7 @@ function GrupoScreen({ grupoId, groups, categories, disponibles, sub, setSub, or
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11, marginBottom: 16 }}>
             {productos.map((p) => (
-              <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={cart[p.id] || 0} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
+              <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={qtyDeProducto(p.id)} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
             ))}
           </div>
         )}
@@ -600,14 +677,19 @@ function ChipOrden({ active, onClick, children }) {
 
 const BUSQUEDAS_FRECUENTES = ["Lavandina", "Cif", "Harpic", "Detergente", "Trapos", "Esponjas"];
 
-function BuscarScreen({ disponibles, q, setQ, cart, onAdd, onDec, onOpenFicha, onVolver, catName }) {
+function BuscarScreen({ disponibles, q, setQ, qtyDeProducto, onAdd, onDec, onOpenFicha, onVolver, catName }) {
   const inputRef = useRef(null);
   useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
 
-  const query = norm(q.trim());
-  const resultados = query
-    ? disponibles.filter((p) => norm(p.name).includes(query) || norm(catName(p.categoryId)).includes(query))
-    : disponibles.slice(0, 8);
+  const query = q.trim();
+  const resultados = useMemo(() => {
+    if (!query) return disponibles.slice(0, 8);
+    return disponibles
+      .map((p) => ({ p, score: puntajeProducto(query, p, catName(p.categoryId)) }))
+      .filter((x) => x.score !== Infinity)
+      .sort((a, b) => a.score - b.score)
+      .map((x) => x.p);
+  }, [query, disponibles]);
 
   return (
     <div>
@@ -651,7 +733,7 @@ function BuscarScreen({ disponibles, q, setQ, cart, onAdd, onDec, onOpenFicha, o
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
             {resultados.map((p) => (
-              <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={cart[p.id] || 0} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
+              <ProductCard key={p.id} product={p} subcat={catName(p.categoryId)} qty={qtyDeProducto(p.id)} onAdd={() => onAdd(p.id)} onDec={() => onDec(p.id)} onOpen={() => onOpenFicha(p.id)} vista="grid" />
             ))}
           </div>
         )}
@@ -686,7 +768,7 @@ function PedidosScreen({ misPedidos, onRepetir }) {
                 </div>
               </div>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: C.texto, marginBottom: 10 }}>
-                {(s.items || []).map((i) => `${i.qty}x ${i.name}`).join(" · ")}
+                {(s.items || []).map((i) => `${i.qty}x ${i.name}${(i.modifiers || []).length > 0 ? ` (${i.modifiers.map((m) => m.name).join(", ")})` : ""}`).join(" · ")}
               </div>
               <div style={{ borderTop: "1.5px solid #EDF2F8", margin: "10px 0" }} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -708,9 +790,13 @@ function PedidosScreen({ misPedidos, onRepetir }) {
 
 // ==================== FICHA DE PRODUCTO ====================
 
-function FichaModal({ product: p, subcat, groupNameTxt, pick, setPick, onClose, onAgregar }) {
-  const precio = precioEfectivo(p);
+function FichaModal({ product: p, subcat, groupNameTxt, pick, setPick, modifierPick, setModifierPick, onClose, onAgregar }) {
+  const precioBase = precioEfectivo(p);
   const enOferta = !!p.enOferta;
+  const tieneVariantes = p.modifiers && p.modifiers.length > 0;
+  const precioFinal = precioBase + (modifierPick ? (modifierPick.price || 0) : 0);
+  const puedeAgregar = !tieneVariantes || !!modifierPick;
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,30,58,.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
       <div onClick={(e) => e.stopPropagation()} style={{
@@ -739,11 +825,31 @@ function FichaModal({ product: p, subcat, groupNameTxt, pick, setPick, onClose, 
           <div style={{ fontSize: 20, fontWeight: 900, lineHeight: 1.22, color: C.texto, marginBottom: 8 }}>{p.name}</div>
           <div style={{ marginBottom: 10 }}>
             {enOferta && <span style={{ fontSize: 15, fontWeight: 700, color: C.textoTenue, textDecoration: "line-through", marginRight: 8 }}>${fmt(p.price)}</span>}
-            <span style={{ fontSize: 27, fontWeight: 900, color: enOferta ? C.rojo : C.azul }}>${fmt(precio)}</span>
+            <span style={{ fontSize: 27, fontWeight: 900, color: enOferta ? C.rojo : C.azul }}>${fmt(precioFinal)}</span>
           </div>
-          <div style={{ fontSize: 13.5, lineHeight: 1.5, fontWeight: 600, color: C.textoSuave, marginBottom: 20 }}>
+          <div style={{ fontSize: 13.5, lineHeight: 1.5, fontWeight: 600, color: C.textoSuave, marginBottom: tieneVariantes ? 18 : 20 }}>
             {p.description || "Producto de limpieza de buena calidad, disponible para entrega en el día."}
           </div>
+
+          {tieneVariantes && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 900, color: C.textoSuave, marginBottom: 8 }}>Elegí una opción</div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {p.modifiers.map((m) => {
+                  const activo = modifierPick && modifierPick.name === m.name;
+                  return (
+                    <button key={m.name} onClick={() => setModifierPick(m)} style={{
+                      padding: "10px 14px", borderRadius: 11, fontSize: 13, fontWeight: 800,
+                      border: `1.5px solid ${activo ? C.azul : C.azulBorde}`, background: activo ? C.azul : "#fff", color: activo ? "#fff" : C.azul,
+                    }}>
+                      {m.name}{m.price > 0 ? ` (+$${fmt(m.price)})` : ""}
+                    </button>
+                  );
+                })}
+              </div>
+              {!modifierPick && <div style={{ fontSize: 12, color: C.textoTenue, marginTop: 8 }}>Elegí una opción para poder agregarlo</div>}
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, height: 56, background: "#fff", border: `1.5px solid ${C.bordeFuerte}`, borderRadius: 15, padding: "0 6px" }}>
@@ -751,11 +857,11 @@ function FichaModal({ product: p, subcat, groupNameTxt, pick, setPick, onClose, 
               <span style={{ fontSize: 16, fontWeight: 900, minWidth: 24, textAlign: "center" }}>{pick}</span>
               <button onClick={() => setPick(pick + 1)} style={{ width: 42, height: 42, borderRadius: 12, border: "none", background: C.azul, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={18} /></button>
             </div>
-            <button onClick={onAgregar} style={{
-              flex: 1, height: 56, borderRadius: 15, background: C.azul, color: "#fff", border: "none", fontWeight: 900,
-              fontSize: 15, boxShadow: "0 8px 18px rgba(27,79,156,.26)",
+            <button onClick={onAgregar} disabled={!puedeAgregar} style={{
+              flex: 1, height: 56, borderRadius: 15, background: puedeAgregar ? C.azul : C.azulApagado, color: "#fff", border: "none", fontWeight: 900,
+              fontSize: 15, boxShadow: puedeAgregar ? "0 8px 18px rgba(27,79,156,.26)" : "none",
             }}>
-              Agregar ${fmt(precio * pick)}
+              Agregar ${fmt(precioFinal * pick)}
             </button>
           </div>
         </div>
@@ -766,8 +872,8 @@ function FichaModal({ product: p, subcat, groupNameTxt, pick, setPick, onClose, 
 
 // ==================== TU PEDIDO ====================
 
-function PedidoModal({ cartItems, cartTotal, disponibles, onAdd, onDec, onSetQty, nombre, setNombre, pago, setPago, notas, setNotas, enviado, enviando, onEnviar, onCerrar, onVaciar, onSeguirComprando }) {
-  const sugeridos = disponibles.filter((p) => !cartItems.some((i) => i.product.id === p.id)).slice(0, 4);
+function PedidoModal({ cartItems, cartTotal, disponibles, onAdd, onDec, onOpenFicha, nombre, setNombre, pago, setPago, notas, setNotas, enviado, enviando, onEnviar, onCerrar, onVaciar, onSeguirComprando }) {
+  const sugeridos = disponibles.filter((p) => !cartItems.some((i) => i.productId === p.id)).slice(0, 4);
 
   if (enviado) {
     return (
@@ -781,7 +887,9 @@ function PedidoModal({ cartItems, cartTotal, disponibles, onAdd, onDec, onSetQty
             <div style={{ fontSize: 13.5, color: C.textoSuave, marginBottom: 20, lineHeight: 1.4 }}>Se abrió WhatsApp con tu pedido. Mandalo y te confirmamos la entrega.</div>
             <div style={{ background: "#fff", border: `1.5px solid ${C.borde}`, borderRadius: 14, padding: 14, marginBottom: 20, textAlign: "left" }}>
               {cartItems.map((i) => (
-                <div key={i.product.id} style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>{i.qty}x {i.product.name}</div>
+                <div key={i.lineId} style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>
+                  {i.qty}x {i.product.name}{(i.modifiers || []).length > 0 ? ` (${i.modifiers.map((m) => m.name).join(", ")})` : ""}
+                </div>
               ))}
               <div style={{ borderTop: "1.5px solid #EDF2F8", margin: "8px 0" }} />
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900, color: C.azul }}>
@@ -811,21 +919,24 @@ function PedidoModal({ cartItems, cartTotal, disponibles, onAdd, onDec, onSetQty
         <div style={{ flex: 1, overflowY: "auto", padding: "0 18px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
             {cartItems.map((i) => {
-              const precio = precioEfectivo(i.product);
+              const precio = precioLinea(i.product, i.modifiers);
               return (
-                <div key={i.product.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 15, padding: 10 }}>
+                <div key={i.lineId} style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 15, padding: 10 }}>
                   <div style={{ width: 58, height: 58, borderRadius: 12, background: C.fotoFondo, flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     {i.product.imageUrl ? <img src={i.product.imageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <ImageIcon size={18} style={{ color: C.textoTenue }} />}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.product.name}</div>
+                    {(i.modifiers || []).length > 0 && (
+                      <div style={{ fontSize: 11, color: C.celeste, fontWeight: 700 }}>{i.modifiers.map((m) => m.name).join(", ")}</div>
+                    )}
                     <div style={{ fontSize: 11.5, color: C.textoTenue, fontWeight: 600 }}>${fmt(precio)} c/u</div>
                   </div>
                   <div style={{ fontSize: 15, fontWeight: 900, color: C.azul, marginRight: 4 }}>${fmt(precio * i.qty)}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, background: C.azulSuave, borderRadius: 10, padding: "3px 5px", height: 40 }}>
-                    <button onClick={() => onDec(i.product.id)} style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={13} /></button>
+                    <button onClick={() => onDec(i.lineId)} style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={13} /></button>
                     <span style={{ fontSize: 13, fontWeight: 900, minWidth: 14, textAlign: "center" }}>{i.qty}</span>
-                    <button onClick={() => onAdd(i.product.id)} style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: C.azul, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={13} /></button>
+                    <button onClick={() => onAdd(i.productId, i.modifiers)} style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: C.azul, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={13} /></button>
                   </div>
                 </div>
               );
@@ -838,7 +949,7 @@ function PedidoModal({ cartItems, cartTotal, disponibles, onAdd, onDec, onSetQty
               <div className="riel" style={{ display: "flex", gap: 9, overflowX: "auto" }}>
                 {sugeridos.map((p) => (
                   <div key={p.id} style={{ width: 130, flexShrink: 0 }}>
-                    <ProductCard product={p} subcat={null} qty={0} onAdd={() => onAdd(p.id)} onDec={() => {}} onOpen={() => onAdd(p.id)} vista="grid" />
+                    <ProductCard product={p} subcat={null} qty={0} onAdd={() => onAdd(p.id)} onDec={() => {}} onOpen={() => onOpenFicha(p.id)} vista="grid" />
                   </div>
                 ))}
               </div>

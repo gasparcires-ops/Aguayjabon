@@ -12,8 +12,11 @@ const fotoTrama = {
 export default function ProductCard({ product: p, subcat, qty, onAdd, onDec, onOpen, vista = "grid" }) {
   const precio = precioEfectivo(p);
   const enOferta = !!p.enOferta;
+  const tieneVariantes = p.modifiers && p.modifiers.length > 0;
+  const qtyMostrada = tieneVariantes ? 0 : qty;
 
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+  const alTocarMas = stop(tieneVariantes ? onOpen : onAdd);
 
   if (vista === "lista") {
     return (
@@ -38,14 +41,14 @@ export default function ProductCard({ product: p, subcat, qty, onAdd, onDec, onO
             <span style={{ fontSize: 17, fontWeight: 900, color: enOferta ? C.rojo : C.azul }}>${fmt(precio)}</span>
           </div>
         </div>
-        {qty > 0 ? (
+        {qtyMostrada > 0 ? (
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.azulSuave, borderRadius: 12, height: 46, padding: "0 6px", flexShrink: 0 }}>
             <button onClick={stop(onDec)} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={15} /></button>
             <span style={{ fontSize: 14, fontWeight: 900, minWidth: 16, textAlign: "center", color: C.azul }}>{qty}</span>
             <button onClick={stop(onAdd)} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: C.azul, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={15} /></button>
           </div>
         ) : (
-          <button onClick={stop(onAdd)} style={{
+          <button onClick={alTocarMas} style={{
             width: 46, height: 46, borderRadius: 14, border: "none", background: C.azul, color: "#fff",
             display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 6px 14px rgba(27,79,156,.3)",
           }}>
@@ -74,20 +77,28 @@ export default function ProductCard({ product: p, subcat, qty, onAdd, onDec, onO
             OFERTA
           </div>
         )}
-        {qty > 0 ? (
+        {qtyMostrada > 0 ? (
           <div style={{ position: "absolute", left: 6, right: 6, bottom: 6, height: 44, borderRadius: 14, background: C.azul, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 6px" }}>
             <button onClick={stop(onDec)} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: "rgba(255,255,255,.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={16} /></button>
             <span style={{ fontSize: 16, fontWeight: 900, color: "#fff" }}>{qty}</span>
             <button onClick={stop(onAdd)} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: "rgba(255,255,255,.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={16} /></button>
           </div>
         ) : (
-          <button onClick={stop(onAdd)} style={{
+          <button onClick={alTocarMas} style={{
             position: "absolute", bottom: 6, right: 6, width: 44, height: 44, borderRadius: 14, border: "none",
             background: C.azul, color: "#fff", fontSize: 26, lineHeight: 1, display: "flex", alignItems: "center",
             justifyContent: "center", boxShadow: "0 6px 14px rgba(27,79,156,.3)",
           }}>
             +
           </button>
+        )}
+        {tieneVariantes && (
+          <div style={{
+            position: "absolute", bottom: 6, left: 6, background: "rgba(16,36,61,.72)", color: "#fff",
+            fontSize: 9, fontWeight: 800, padding: "3px 6px", borderRadius: 6,
+          }}>
+            {p.modifiers.length} opciones
+          </div>
         )}
       </div>
       <div style={{ marginBottom: 3 }}>
