@@ -178,6 +178,21 @@ export default function PuntoDeVenta() {
   const saveAccountUsers = (n) => { setAccountUsers(n); persist("app_users", n); };
   const saveObservaciones = (n) => { setObservaciones(n); persist("observaciones", n); };
 
+  // Trae los productos más recientes de la base justo antes de escribir, para
+  // no pisar cambios hechos desde otra pestaña/dispositivo mientras esta
+  // quedó abierta sin refrescar (mismo problema que causaba que "desaparecieran"
+  // productos cargados desde otro lado).
+  const withFreshProducts = async (updater) => {
+    let fresh = products;
+    try {
+      const fp = await getData("products");
+      if (fp !== null && fp !== undefined) fresh = fp;
+    } catch (e) {}
+    const next = updater(fresh);
+    saveProducts(next);
+    return next;
+  };
+
   const abrirCaja = async (amount) => {
     const nueva = { openingAmount: amount, openedAt: new Date().toISOString(), employeeName: activeEmployee ? activeEmployee.name : account };
     setCajaActual(nueva);
@@ -279,15 +294,26 @@ export default function PuntoDeVenta() {
   };
   const deleteObservacion = (id) => saveObservaciones(observaciones.filter((o) => o.id !== id));
 
-  const deleteSale = (id) => {
-    const sale = sales.find((s) => s.id === id);
+  const deleteSale = async (id) => {
+    let freshSales = sales;
+    let freshProducts = products;
+    try {
+      const fs = await getData("sales");
+      if (fs !== null && fs !== undefined) freshSales = fs;
+      const fp = await getData("products");
+      if (fp !== null && fp !== undefined) freshProducts = fp;
+    } catch (e) {}
+    const sale = freshSales.find((s) => s.id === id);
     if (!sale) return;
-    const nextProducts = products.map((p) => {
-      const item = sale.items.find((i) => i.productId === p.id);
-      return item ? { ...p, stock: p.stock + item.qty } : p;
+    const nextProducts = freshProducts.map((p) => {
+      // suma TODAS las líneas de ese producto en la venta (antes solo tomaba
+      // la primera, así que un producto pedido con dos variantes distintas
+      // no devolvía bien el stock de la segunda).
+      const qtyVendida = sale.items.filter((i) => i.productId === p.id).reduce((a, i) => a + i.qty, 0);
+      return qtyVendida > 0 ? { ...p, stock: p.stock + qtyVendida } : p;
     });
     saveProducts(nextProducts);
-    saveSales(sales.filter((s) => s.id !== id));
+    saveSales(freshSales.filter((s) => s.id !== id));
   };
 
   const doLogin = () => {
@@ -484,7 +510,7 @@ export default function PuntoDeVenta() {
     costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
     imageUrl: p.imageUrl || "", description: p.description || "", enOferta: false, precioOferta: "",
   });
-  const saveProduct = (formData, keepOpen) => {
+  const saveProduct = async (formData, keepOpen) => {
     const name = formData.name.trim();
     const price = parseFloat(formData.price);
     const stock = parseInt(formData.stock, 10);
@@ -511,28 +537,26 @@ export default function PuntoDeVenta() {
       enOferta: !!formData.enOferta && !isNaN(precioOferta) && precioOferta > 0,
       precioOferta: !isNaN(precioOferta) ? precioOferta : 0,
     };
-    if (formData.id) {
-      saveProducts(products.map((p) => (p.id === formData.id ? { ...p, ...data } : p)));
-    } else {
-      saveProducts([...products, { id: uid(), ...data }]);
-    }
+    await withFreshProducts((fresh) => (
+      formData.id ? fresh.map((p) => (p.id === formData.id ? { ...p, ...data } : p)) : [...fresh, { id: uid(), ...data }]
+    ));
     if (keepOpen) {
       setProductForm({ name: "", price: "", stock: "", categoryId: formData.categoryId || "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "" });
     } else {
       setProductForm(null);
     }
   };
-  const deleteProduct = (id) => saveProducts(products.filter((p) => p.id !== id));
-  const setProductOferta = (id, enOferta, precioOferta) => {
-    saveProducts(products.map((p) => (p.id === id ? { ...p, enOferta, precioOferta: precioOferta || 0 } : p)));
+  const deleteProduct = async (id) => { await withFreshProducts((fresh) => fresh.filter((p) => p.id !== id)); };
+  const setProductOferta = async (id, enOferta, precioOferta) => {
+    await withFreshProducts((fresh) => fresh.map((p) => (p.id === id ? { ...p, enOferta, precioOferta: precioOferta || 0 } : p)));
   };
-  const sumarStock = (product, amount) => {
+  const sumarStock = async (product, amount) => {
     if (!amount || amount <= 0) return;
-    saveProducts(products.map((p) => (p.id === product.id ? { ...p, stock: p.stock + amount } : p)));
+    await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? { ...p, stock: p.stock + amount } : p)));
   };
-  const editarPrecioRapido = (product, price) => {
+  const editarPrecioRapido = async (product, price) => {
     if (isNaN(price) || price < 0) return;
-    saveProducts(products.map((p) => (p.id === product.id ? { ...p, price } : p)));
+    await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? { ...p, price } : p)));
   };
 
   const generarCodigosFaltantes = () => {
@@ -564,7 +588,18 @@ export default function PuntoDeVenta() {
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-      let newCategories = [...categories];
+      // Trae categorías y productos frescos antes de mezclar el Excel, para
+      // no pisar cambios hechos desde otra pestaña mientras esta estaba abierta.
+      let freshCategories = categories;
+      let freshProducts = products;
+      try {
+        const fc = await getData("categories");
+        if (fc !== null && fc !== undefined) freshCategories = fc;
+        const fp = await getData("products");
+        if (fp !== null && fp !== undefined) freshProducts = fp;
+      } catch (err) {}
+
+      let newCategories = [...freshCategories];
       const ensureCategory = (name) => {
         const trimmed = String(name || "").trim();
         if (!trimmed) return "";
@@ -575,7 +610,7 @@ export default function PuntoDeVenta() {
         return cat.id;
       };
 
-      let updated = [...products];
+      let updated = [...freshProducts];
       let added = 0, editedCount = 0;
       rows.forEach((row) => {
         const get = (...keys) => {
@@ -2815,7 +2850,7 @@ function ModifierPickerModal({ product, onClose, onConfirm }) {
         );
       })}
       <button onClick={() => onConfirm(selected)} style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8 }}>
-        Agregar · ${fmt(product.price + extra)}
+        Agregar · ${fmt(precioVenta(product) + extra)}
       </button>
     </Overlay>
   );
@@ -3010,7 +3045,10 @@ function PriceListModal({ products, categories, groups, onClose }) {
                       {items.map((p) => (
                         <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, padding: "3px 0", borderBottom: "1px dotted #E1EAF4" }}>
                           <span>{p.name}</span>
-                          <span style={{ fontWeight: 700, color: C.azul, whiteSpace: "nowrap", marginLeft: 10 }}>${fmt(p.price)}</span>
+                          <span style={{ fontWeight: 700, whiteSpace: "nowrap", marginLeft: 10 }}>
+                            {p.enOferta && <span style={{ color: C.textoTenue, textDecoration: "line-through", fontWeight: 500, marginRight: 5 }}>${fmt(p.price)}</span>}
+                            <span style={{ color: p.enOferta ? C.rojo : C.azul }}>${fmt(precioVenta(p))}</span>
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -3066,7 +3104,7 @@ function SheetLabelModal({ products, onClose }) {
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderBottom: "1px solid #EDF2F8" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-              <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>${fmt(p.price)}</div>
+              <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>${fmt(precioVenta(p))}{p.enOferta && " · oferta"}</div>
             </div>
             <input
               type="number" min="0" value={qty[p.id] || ""} onChange={(e) => setQtyFor(p.id, e.target.value)}
@@ -3096,7 +3134,7 @@ function SheetLabelModal({ products, onClose }) {
                 <div style={{ color: "#fff", fontSize: "9pt", fontWeight: 700, lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
               </div>
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: "2mm", padding: "1.5mm 2mm" }}>
-                <div style={{ color: "#185FA5", fontSize: "15pt", fontWeight: 800, flexShrink: 0 }}>${fmt(p.price)}</div>
+                <div style={{ color: p.enOferta ? "#B0242A" : "#185FA5", fontSize: "15pt", fontWeight: 800, flexShrink: 0 }}>${fmt(precioVenta(p))}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <BarcodeSVG value={p.barcode} height={22} />
                   <div style={{ fontSize: "6.5pt", letterSpacing: 0.5, color: "#5B7791", textAlign: "center" }}>{p.barcode}</div>
