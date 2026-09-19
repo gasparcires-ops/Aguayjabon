@@ -47,7 +47,7 @@ export default function PuntoDeVenta() {
   const [cart, setCart] = useState([]); // {lineId, productId, name, price, modifiers:[{name,price}], qty}
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("all");
-  const [payMethod, setPayMethod] = useState("efectivo");
+  const [payMethod, setPayMethod] = useState(null);
   const [discount, setDiscount] = useState({ type: "pct", value: 0 });
   const [showDiscount, setShowDiscount] = useState(false);
 
@@ -423,6 +423,7 @@ export default function PuntoDeVenta() {
 
   const cobrar = async (pending = false) => {
     if (cart.length === 0) return;
+    if (!pending && !payMethod) return; // no dejar cobrar sin elegir forma de pago a propósito
     // Trae los datos más recientes justo antes de guardar, para no pisar
     // ventas o productos cargados desde otro momento mientras esta pestaña
     // estaba abierta sin refrescar.
@@ -467,6 +468,7 @@ export default function PuntoDeVenta() {
     setCart([]);
     setDiscount({ type: "pct", value: 0 });
     setShowDiscount(false);
+    setPayMethod(null);
     setReceipt(sale);
   };
 
@@ -1434,8 +1436,8 @@ function VenderTab({
                 })}
               </div>
 
-              <button onClick={() => cobrar(false)} style={{ ...btn("primario", "lg"), width: "100%" }}>
-                Cobrar ${fmt(cartTotals.total)}
+              <button onClick={() => cobrar(false)} disabled={!payMethod} style={{ ...btn("primario", "lg"), width: "100%", opacity: payMethod ? 1 : 0.5 }}>
+                {payMethod ? `Cobrar ${methodLabel[payMethod]} $${fmt(cartTotals.total)}` : "Elegí una forma de pago"}
               </button>
               <button onClick={() => cobrar(true)} style={{ ...btn("terciario"), width: "100%", marginTop: 8 }}>
                 <ClipboardList size={15} /> Dejar pendiente de pago (a entregar)
