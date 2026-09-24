@@ -13,6 +13,8 @@ import JsBarcode from "jsbarcode";
 import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
 
 const LOW_STOCK = 5;
+// Recargo según medio de pago (se suma sobre el total ya con descuento aplicado)
+const SURCHARGE_RATES = { credito: 0.10, mercadopago: 0.01 };
 const sans = "Nunito, system-ui, -apple-system, sans-serif";
 const mono = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace";
 
@@ -381,8 +383,18 @@ export default function PuntoDeVenta() {
       discountAmount = discount.type === "pct" ? (subtotal * discount.value) / 100 : discount.value;
       discountAmount = Math.min(discountAmount, subtotal);
     }
-    return { subtotal, discountAmount, total: subtotal - discountAmount };
-  }, [cart, discount]);
+    const totalSinRecargo = subtotal - discountAmount;
+    const surchargeRate = (payMethod && SURCHARGE_RATES[payMethod]) || 0;
+    const surchargeAmount = totalSinRecargo * surchargeRate;
+    return {
+      subtotal,
+      discountAmount,
+      totalSinRecargo,
+      surchargeRate,
+      surchargeAmount,
+      total: totalSinRecargo + surchargeAmount,
+    };
+  }, [cart, discount, payMethod]);
 
   const lineSig = (productId, modifiers) => productId + "|" + modifiers.map((m) => m.name).sort().join(",");
 
@@ -454,7 +466,9 @@ export default function PuntoDeVenta() {
       discountType: discount.value > 0 ? discount.type : null,
       discountValue: discount.value > 0 ? discount.value : 0,
       discountAmount: cartTotals.discountAmount,
-      total: cartTotals.total,
+      surchargeRate: pending ? 0 : cartTotals.surchargeRate,
+      surchargeAmount: pending ? 0 : cartTotals.surchargeAmount,
+      total: pending ? cartTotals.totalSinRecargo : cartTotals.total,
       method: pending ? null : payMethod,
       pending: pending,
     };
@@ -1412,6 +1426,11 @@ function VenderTab({
                 {cartTotals.discountAmount > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#A85C06", marginBottom: 3 }}>
                     <span>Descuento</span><span>-${fmt(cartTotals.discountAmount)}</span>
+                  </div>
+                )}
+                {cartTotals.surchargeAmount > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "#1B4F9C", marginBottom: 3 }}>
+                    <span>Recargo {methodLabel[payMethod]} ({Math.round(cartTotals.surchargeRate * 100)}%)</span><span>+${fmt(cartTotals.surchargeAmount)}</span>
                   </div>
                 )}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -2898,11 +2917,14 @@ function ReceiptModal({ sale, methodLabel, onClose }) {
           })}
         </div>
         <Dashed />
+        {(sale.discountAmount > 0 || sale.surchargeAmount > 0) && (
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5B7791" }}><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>
+        )}
         {sale.discountAmount > 0 && (
-          <>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#5B7791" }}><span>Subtotal</span><span>${fmt(sale.subtotal)}</span></div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#A85C06" }}><span>Descuento</span><span>-${fmt(sale.discountAmount)}</span></div>
-          </>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#A85C06" }}><span>Descuento</span><span>-${fmt(sale.discountAmount)}</span></div>
+        )}
+        {sale.surchargeAmount > 0 && (
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#1B4F9C" }}><span>Recargo ({Math.round((sale.surchargeRate || 0) * 100)}%)</span><span>+${fmt(sale.surchargeAmount)}</span></div>
         )}
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 700, margin: "8px 0" }}>
           <span>TOTAL</span><span>${fmt(sale.total)}</span>
