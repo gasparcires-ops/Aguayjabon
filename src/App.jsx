@@ -940,6 +940,7 @@ export default function PuntoDeVenta() {
               { id: "articulos", label: "Productos", icon: Package },
               { id: "caja", label: "Caja del día", icon: Banknote },
               { id: "resumen", label: "Cómo vamos", icon: BarChart3 },
+              { id: "panel", label: "Panel de control", icon: TrendingUp },
               { id: "presupuestos", label: "Presupuestos", icon: ClipboardList },
             ].map((t) => {
               const Icon = t.icon;
@@ -1047,6 +1048,9 @@ export default function PuntoDeVenta() {
         )}
         {tab === "resumen" && (
           <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} methodLabel={methodLabel} />
+        )}
+        {tab === "panel" && (
+          <PanelTab sales={sales} categories={categories} products={products} />
         )}
         {tab === "presupuestos" && (
           <PresupuestosTab products={products} presupuestos={presupuestos} onGenerar={generarPresupuesto} onVer={setPresupuestoGenerado} onEliminar={eliminarPresupuesto} />
@@ -2238,6 +2242,225 @@ function ResumenTab({ sales, categories, employees, range, setRange, products, m
           </Section>
         </>
       )}
+    </div>
+  );
+}
+
+// ---------------- Panel de control ----------------
+
+function diasDesde(fecha) {
+  const d = new Date(fecha);
+  const now = new Date();
+  return Math.max(0, Math.floor((now - d) / (1000 * 60 * 60 * 24)));
+}
+
+function PanelTab({ sales, categories, products }) {
+  const [ventana, setVentana] = useState(30); // días para calcular rotación
+
+  // Ventas "reales": todo lo que ya salió de stock y no corre riesgo de cancelarse
+  // (los pedidos del catálogo todavía sin confirmar por el negocio se excluyen).
+  const ventasValidas = useMemo(
+    () => sales.filter((s) => !(s.origen === "catalogo" && !s.confirmado)),
+    [sales]
+  );
+
+  const dailySeries = useMemo(() => {
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toDateString();
+      const total = ventasValidas.filter((s) => new Date(s.date).toDateString() === key).reduce((a, s) => a + s.total, 0);
+      days.push({ label: d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }), value: total });
+    }
+    return days;
+  }, [ventasValidas]);
+
+  const monthlySeries = useMemo(() => {
+    const months = [];
+    const now = new Date();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const total = ventasValidas
+        .filter((s) => {
+          const sd = new Date(s.date);
+          return sd.getMonth() === d.getMonth() && sd.getFullYear() === d.getFullYear();
+        })
+        .reduce((a, s) => a + s.total, 0);
+      months.push({ label: d.toLocaleDateString("es-AR", { month: "short" }).replace(".", ""), value: total });
+    }
+    return months;
+  }, [ventasValidas]);
+
+  const rotacion = useMemo(() => {
+    const desde = new Date();
+    desde.setDate(desde.getDate() - ventana);
+    const map = {};
+    ventasValidas.forEach((s) => {
+      const dentroVentana = new Date(s.date) >= desde;
+      s.items.forEach((i) => {
+        if (!map[i.productId]) map[i.productId] = { qtyVentana: 0, revenueVentana: 0, ultimaVenta: null };
+        if (dentroVentana) {
+          map[i.productId].qtyVentana += i.qty;
+          map[i.productId].revenueVentana += i.price * i.qty;
+        }
+        const fecha = new Date(s.date);
+        if (!map[i.productId].ultimaVenta || fecha > map[i.productId].ultimaVenta) map[i.productId].ultimaVenta = fecha;
+      });
+    });
+    return map;
+  }, [ventasValidas, ventana]);
+
+  const hayCostos = products.some((p) => p.cost > 0);
+
+  const stockInfo = useMemo(() => {
+    let capitalCosto = 0;
+    let capitalCostoParcial = false;
+    let valorVenta = 0;
+    let gananciaPotencial = 0;
+    let unidades = 0;
+    const porCategoria = {};
+    products.forEach((p) => {
+      if (!p.stock || p.stock <= 0) return;
+      unidades += p.stock;
+      const costUnit = p.cost > 0 ? p.cost : null;
+      if (costUnit) {
+        capitalCosto += costUnit * p.stock;
+        gananciaPotencial += (precioVenta(p) - costUnit) * p.stock;
+      } else {
+        capitalCostoParcial = true;
+      }
+      valorVenta += precioVenta(p) * p.stock;
+      const catName = categories.find((c) => c.id === p.categoryId)?.name || "Sin categoría";
+      const valorCat = (costUnit || precioVenta(p)) * p.stock;
+      porCategoria[catName] = (porCategoria[catName] || 0) + valorCat;
+    });
+    return { capitalCosto, capitalCostoParcial, valorVenta, gananciaPotencial, unidades, porCategoria };
+  }, [products, categories]);
+
+  const conStock = products.filter((p) => p.stock > 0);
+
+  const altaRotacion = conStock
+    .map((p) => ({ p, r: rotacion[p.id] || { qtyVentana: 0, revenueVentana: 0 } }))
+    .filter((x) => x.r.qtyVentana > 0)
+    .sort((a, b) => b.r.qtyVentana - a.r.qtyVentana)
+    .slice(0, 10);
+  const maxAlta = altaRotacion.length ? altaRotacion[0].r.qtyVentana : 1;
+
+  const sinMovimientoAll = conStock
+    .map((p) => ({ p, r: rotacion[p.id] || { qtyVentana: 0, ultimaVenta: null } }))
+    .filter((x) => x.r.qtyVentana === 0)
+    .map((x) => ({ ...x, capital: (x.p.cost > 0 ? x.p.cost : precioVenta(x.p)) * x.p.stock }))
+    .sort((a, b) => b.capital - a.capital);
+  const sinMovimiento = sinMovimientoAll.slice(0, 12);
+
+  const maxCat = Math.max(1, ...Object.values(stockInfo.porCategoria));
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <MetricCard label="Capital invertido en stock" value={"$" + fmt(stockInfo.capitalCosto)} />
+        <MetricCard label="Valor de venta del stock" value={"$" + fmt(stockInfo.valorVenta)} />
+      </div>
+      {stockInfo.capitalCostoParcial && (
+        <div style={{ fontSize: 11.5, color: "#8AA2BC", margin: "6px 0 10px" }}>
+          * Hay productos sin costo cargado; para esos se usó el precio de venta en el cálculo.
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        {hayCostos && <MetricCard label="Ganancia potencial (si vendés todo el stock)" value={"$" + fmt(stockInfo.gananciaPotencial)} />}
+        <MetricCard label="Productos sin movimiento" value={sinMovimientoAll.length} warn={sinMovimientoAll.length > 0} />
+      </div>
+
+      <Section title="Ventas por día (últimos 30 días)">
+        <MiniBarChart data={dailySeries} color="#1B4F9C" showEvery={5} />
+      </Section>
+
+      <Section title="Ventas por mes (últimos 12 meses)">
+        <MiniBarChart data={monthlySeries} color="#1B4F9C" showEvery={1} />
+      </Section>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 10px", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#5B7791" }}>Rotación de productos, ventana de:</span>
+        {[30, 60, 90].map((d) => (
+          <Chip key={d} active={ventana === d} onClick={() => setVentana(d)}>{d} días</Chip>
+        ))}
+      </div>
+
+      <Section title="Alta rotación (más vendidos en unidades)">
+        {altaRotacion.length === 0 ? (
+          <EmptyState text="Todavía no hay ventas suficientes en esta ventana." />
+        ) : (
+          altaRotacion.map(({ p, r }) => (
+            <div key={p.id} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
+                <span style={{ fontWeight: 500 }}>{p.name}</span>
+                <span style={{ fontWeight: 700 }}>{r.qtyVentana} un. · ${fmt(r.revenueVentana)}</span>
+              </div>
+              <div style={{ height: 6, background: "#EDF2F8", borderRadius: 4 }}>
+                <div style={{ height: 6, width: `${(r.qtyVentana / maxAlta) * 100}%`, background: "#1B4F9C", borderRadius: 4 }} />
+              </div>
+            </div>
+          ))
+        )}
+      </Section>
+
+      <Section title="Sin movimiento (candidatos a oferta)">
+        {sinMovimientoAll.length === 0 ? (
+          <EmptyState text="No hay productos con stock que no se hayan vendido en esta ventana. ¡Buena rotación!" />
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: "#8AA2BC", marginBottom: 10 }}>
+              Tienen stock pero no se vendieron en los últimos {ventana} días. Ordenados por cuánto capital tenés inmovilizado en cada uno
+              {sinMovimientoAll.length > sinMovimiento.length ? ` (se muestran los ${sinMovimiento.length} con más capital de ${sinMovimientoAll.length} en total)` : ""}.
+            </div>
+            {sinMovimiento.map(({ p, r, capital }) => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5FA" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                  <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>
+                    Stock: {p.stock} · {r.ultimaVenta ? `Última venta hace ${diasDesde(r.ultimaVenta)} días` : "Nunca se vendió"}
+                  </div>
+                </div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: "#A85C06" }}>${fmt(capital)}</div>
+              </div>
+            ))}
+          </>
+        )}
+      </Section>
+
+      {Object.keys(stockInfo.porCategoria).length > 0 && (
+        <Section title="Capital en stock por categoría">
+          {Object.entries(stockInfo.porCategoria).sort((a, b) => b[1] - a[1]).map(([name, val]) => (
+            <BarRow key={name} label={name} value={val} max={maxCat} />
+          ))}
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function MiniBarChart({ data, color, showEvery = 1 }) {
+  const max = Math.max(1, ...data.map((d) => d.value));
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 90 }}>
+        {data.map((d, i) => (
+          <div key={i} title={`${d.label}: $${fmt(d.value)}`} style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end" }}>
+            <div style={{
+              width: "100%", minHeight: d.value > 0 ? 3 : 0, height: `${(d.value / max) * 100}%`,
+              background: color, borderRadius: "3px 3px 0 0",
+            }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 3, marginTop: 6 }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 9.5, color: "#8AA2BC" }}>
+            {i % showEvery === 0 ? d.label : ""}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
