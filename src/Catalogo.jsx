@@ -4,6 +4,7 @@ import {
   Plus, Minus, X, Check, Image as ImageIcon,
 } from "lucide-react";
 import { getData, setData } from "./lib/storage";
+import { consumirFIFO } from "./lib/lotes";
 import { C } from "./ui";
 import ProductCard, { precioEfectivo } from "./components/ProductCard";
 
@@ -245,6 +246,18 @@ export default function Catalogo() {
       if (fs !== null && fs !== undefined) freshSales = fs;
 
       const nextNumber = freshSales.length + 1;
+
+      // Igual que en la venta del local: descuenta siguiendo FIFO y congela
+      // el costo real consumido en cada línea del pedido.
+      const costoPorProducto = {};
+      const nextProducts = freshProducts.map((p) => {
+        const cantidadVendida = cartItems.filter((i) => i.product.id === p.id).reduce((a, i) => a + i.qty, 0);
+        if (cantidadVendida <= 0) return p;
+        const { lotes, costoUnitarioPromedio } = consumirFIFO(p, cantidadVendida);
+        costoPorProducto[p.id] = costoUnitarioPromedio;
+        return { ...p, stock: Math.max(0, p.stock - cantidadVendida), lotes };
+      });
+
       const sale = {
         id: uid(),
         number: nextNumber,
@@ -261,6 +274,7 @@ export default function Catalogo() {
         items: cartItems.map((i) => ({
           productId: i.product.id, name: i.product.name, price: precioLinea(i.product, i.modifiers), qty: i.qty,
           modifiers: i.modifiers || [], categoryId: i.product.categoryId || null,
+          cost: costoPorProducto[i.product.id] != null ? costoPorProducto[i.product.id] : (i.product.cost || 0),
         })),
         subtotal: cartTotal,
         discountType: null,
@@ -269,10 +283,6 @@ export default function Catalogo() {
         total: cartTotal,
       };
       const nextSales = [sale, ...freshSales];
-      const nextProducts = freshProducts.map((p) => {
-        const cantidadVendida = cartItems.filter((i) => i.product.id === p.id).reduce((a, i) => a + i.qty, 0);
-        return cantidadVendida > 0 ? { ...p, stock: Math.max(0, p.stock - cantidadVendida) } : p;
-      });
       await setData("sales", nextSales);
       await setData("products", nextProducts);
 

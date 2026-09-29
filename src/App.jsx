@@ -8,6 +8,7 @@ import {
   DollarSign, CircleAlert, Check, ClipboardList, Image as ImageIcon,
 } from "lucide-react";
 import { getData, setData, deleteData, uploadProductImage } from "./lib/storage";
+import { agregarLoteStock, sincronizarLotesConStock, consumirFIFO, restaurarLote, lotesEfectivos } from "./lib/lotes";
 import * as XLSX from "xlsx";
 import JsBarcode from "jsbarcode";
 import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
@@ -22,6 +23,9 @@ const fmt = (n) =>
   Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const precioVenta = (p) => (p && p.enOferta && p.precioOferta > 0 ? p.precioOferta : p ? p.price : 0);
+// Costo real de lo que queda en stock, sumando cada lote al costo que tenía
+// cuando entró (en vez de multiplicar todo el stock por el costo actual).
+const costoStockProducto = (p) => lotesEfectivos(p).reduce((a, l) => a + l.qty * (l.costoUnitario || 0), 0);
 
 export default function PuntoDeVenta() {
   const [loaded, setLoaded] = useState(false);
@@ -65,6 +69,7 @@ export default function PuntoDeVenta() {
   const [cajaActual, setCajaActual] = useState(null);
   const [cajaHistorial, setCajaHistorial] = useState([]);
   const [observaciones, setObservaciones] = useState([]);
+  const [compras, setCompras] = useState([]); // historial de cargas de stock (panel "Cargar stock")
   const [labelProduct, setLabelProduct] = useState(null);
   const [sheetLabelOpen, setSheetLabelOpen] = useState(false);
   const [priceListOpen, setPriceListOpen] = useState(false);
@@ -100,6 +105,7 @@ export default function PuntoDeVenta() {
     setCajaActual(await load("caja_actual", null));
     setCajaHistorial(await load("caja_historial", []));
     setObservaciones(await load("observaciones", []));
+    setCompras(await load("compras", []));
     setPresupuestoNextNum(await load("presupuesto_next_num", 1));
     setPresupuestos(await load("presupuestos", []));
   };
@@ -179,6 +185,7 @@ export default function PuntoDeVenta() {
   const saveSales = (n) => { setSales(n); persist("sales", n); };
   const saveAccountUsers = (n) => { setAccountUsers(n); persist("app_users", n); };
   const saveObservaciones = (n) => { setObservaciones(n); persist("observaciones", n); };
+  const saveCompras = (n) => { setCompras(n); persist("compras", n); };
 
   // Trae los productos más recientes de la base justo antes de escribir, para
   // no pisar cambios hechos desde otra pestaña/dispositivo mientras esta
@@ -311,8 +318,14 @@ export default function PuntoDeVenta() {
       // suma TODAS las líneas de ese producto en la venta (antes solo tomaba
       // la primera, así que un producto pedido con dos variantes distintas
       // no devolvía bien el stock de la segunda).
-      const qtyVendida = sale.items.filter((i) => i.productId === p.id).reduce((a, i) => a + i.qty, 0);
-      return qtyVendida > 0 ? { ...p, stock: p.stock + qtyVendida } : p;
+      const itemsProducto = sale.items.filter((i) => i.productId === p.id);
+      const qtyVendida = itemsProducto.reduce((a, i) => a + i.qty, 0);
+      if (qtyVendida <= 0) return p;
+      // El stock devuelto vuelve como lote al frente de la cola, al costo que
+      // tenía cuando se vendió (si esa venta ya lo tenía grabado), para que
+      // sea lo primero en salir de nuevo y no se pierda el costeo FIFO.
+      const costoUnitario = itemsProducto[0] && itemsProducto[0].cost != null ? itemsProducto[0].cost : (p.cost || 0);
+      return restaurarLote(p, qtyVendida, costoUnitario, sale.date);
     });
     saveProducts(nextProducts);
     saveSales(freshSales.filter((s) => s.id !== id));
@@ -449,6 +462,20 @@ export default function PuntoDeVenta() {
     } catch (e) {}
 
     const nextNumber = freshSales.length + 1;
+
+    // Descuenta el stock vendido siguiendo FIFO (lote más viejo primero) y
+    // guarda qué costo tenía realmente lo que se vendió, para congelarlo en
+    // la venta. Así, si después cargás stock nuevo a otro costo, la ganancia
+    // de esta venta ya registrada no se mueve.
+    const costoPorProducto = {};
+    const nextProducts = freshProducts.map((p) => {
+      const soldQty = cart.filter((l) => l.productId === p.id).reduce((a, l) => a + l.qty, 0);
+      if (soldQty <= 0) return p;
+      const { lotes, costoUnitarioPromedio } = consumirFIFO(p, soldQty);
+      costoPorProducto[p.id] = costoUnitarioPromedio;
+      return { ...p, stock: p.stock - soldQty, lotes };
+    });
+
     const sale = {
       id: uid(),
       number: nextNumber,
@@ -460,6 +487,7 @@ export default function PuntoDeVenta() {
         return {
           productId: l.productId, name: l.name, price: l.price, qty: l.qty,
           modifiers: l.modifiers || [], categoryId: product ? product.categoryId : null,
+          cost: costoPorProducto[l.productId] != null ? costoPorProducto[l.productId] : (product ? product.cost || 0 : 0),
         };
       }),
       subtotal: cartTotals.subtotal,
@@ -473,10 +501,6 @@ export default function PuntoDeVenta() {
       pending: pending,
     };
     const nextSales = [sale, ...freshSales];
-    const nextProducts = freshProducts.map((p) => {
-      const soldQty = cart.filter((l) => l.productId === p.id).reduce((a, l) => a + l.qty, 0);
-      return soldQty > 0 ? { ...p, stock: p.stock - soldQty } : p;
-    });
     saveSales(nextSales);
     saveProducts(nextProducts);
     setCart([]);
@@ -553,9 +577,20 @@ export default function PuntoDeVenta() {
       enOferta: !!formData.enOferta && !isNaN(precioOferta) && precioOferta > 0,
       precioOferta: !isNaN(precioOferta) ? precioOferta : 0,
     };
-    await withFreshProducts((fresh) => (
-      formData.id ? fresh.map((p) => (p.id === formData.id ? { ...p, ...data } : p)) : [...fresh, { id: uid(), ...data }]
-    ));
+    await withFreshProducts((fresh) => {
+      if (!formData.id) {
+        // Producto nuevo: si arranca con stock, ese es su primer lote.
+        return [...fresh, { id: uid(), ...data, lotes: stock > 0 ? [{ id: uid(), qty: stock, costoUnitario: cost || 0, fecha: new Date().toISOString() }] : [] }];
+      }
+      return fresh.map((p) => {
+        if (p.id !== formData.id) return p;
+        // Si el stock cambió a mano desde este formulario, reconcilia los
+        // lotes: si subió, es una carga nueva al costo indicado; si bajó, es
+        // una corrección y se descuenta de lo más nuevo primero.
+        const lotes = sincronizarLotesConStock(p, stock, cost);
+        return { ...p, ...data, lotes };
+      });
+    });
     if (keepOpen) {
       setProductForm({ name: "", price: "", stock: "", categoryId: formData.categoryId || "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "" });
     } else {
@@ -568,7 +603,32 @@ export default function PuntoDeVenta() {
   };
   const sumarStock = async (product, amount) => {
     if (!amount || amount <= 0) return;
-    await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? { ...p, stock: p.stock + amount } : p)));
+    // Restock rápido: se asume el mismo costo que ya tenía cargado el producto.
+    // Para cargar stock a un costo distinto, usar el panel "Cargar stock".
+    await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? agregarLoteStock(p, amount, p.cost) : p)));
+  };
+  // Carga de stock con costo propio (panel dedicado "Cargar stock"). Además
+  // de sumar al producto, registra el movimiento en un historial de compras.
+  const cargarStockConCosto = async (productId, qty, costoUnitario) => {
+    if (!qty || qty <= 0) return;
+    let freshProducts = products;
+    let freshCompras = compras;
+    try {
+      const fp = await getData("products");
+      if (fp !== null && fp !== undefined) freshProducts = fp;
+      const fc = await getData("compras");
+      if (fc !== null && fc !== undefined) freshCompras = fc;
+    } catch (e) {}
+    const product = freshProducts.find((p) => p.id === productId);
+    if (!product) return;
+    const nextProducts = freshProducts.map((p) => (p.id === productId ? agregarLoteStock(p, qty, costoUnitario) : p));
+    const compra = {
+      id: uid(), date: new Date().toISOString(), productId, productName: product.name,
+      qty, costoUnitario, total: qty * costoUnitario,
+    };
+    const nextCompras = [compra, ...freshCompras];
+    saveProducts(nextProducts);
+    saveCompras(nextCompras);
   };
   const editarPrecioRapido = async (product, price) => {
     if (isNaN(price) || price < 0) return;
@@ -938,6 +998,7 @@ export default function PuntoDeVenta() {
             {[
               { id: "vender", label: "Vender", icon: ShoppingCart },
               { id: "articulos", label: "Productos", icon: Package },
+              { id: "cargarStock", label: "Cargar stock", icon: PackagePlus },
               { id: "caja", label: "Caja del día", icon: Banknote },
               { id: "resumen", label: "Cómo vamos", icon: BarChart3 },
               { id: "panel", label: "Panel de control", icon: TrendingUp },
@@ -1051,6 +1112,9 @@ export default function PuntoDeVenta() {
         )}
         {tab === "panel" && (
           <PanelTab sales={sales} categories={categories} products={products} />
+        )}
+        {tab === "cargarStock" && (
+          <CargarStockTab products={products} compras={compras} onCargar={cargarStockConCosto} />
         )}
         {tab === "presupuestos" && (
           <PresupuestosTab products={products} presupuestos={presupuestos} onGenerar={generarPresupuesto} onVer={setPresupuestoGenerado} onEliminar={eliminarPresupuesto} />
@@ -2131,15 +2195,22 @@ function ResumenTab({ sales, categories, employees, range, setRange, products, m
   const total = filtered.reduce((a, s) => a + s.total, 0);
   const count = filtered.length;
 
+  // El costo de cada línea se toma del que quedó grabado en la venta (el que
+  // realmente tenía ese stock cuando se vendió). Las ventas viejas, de antes
+  // de que se empezara a guardar ese dato, usan el costo actual del producto
+  // como aproximación — es lo único disponible para esas.
   const ganancia = filtered.reduce((acc, s) => {
     const gananciaBruta = s.items.reduce((a, i) => {
-      const prod = products.find((p) => p.id === i.productId);
-      const cost = prod && prod.cost ? prod.cost : 0;
+      let cost = i.cost;
+      if (cost == null) {
+        const prod = products.find((p) => p.id === i.productId);
+        cost = prod && prod.cost ? prod.cost : 0;
+      }
       return a + (i.price - cost) * i.qty;
     }, 0);
     return acc + gananciaBruta - (s.discountAmount || 0);
   }, 0);
-  const hayCostos = products.some((p) => p.cost > 0);
+  const hayCostos = products.some((p) => p.cost > 0) || sales.some((s) => s.items.some((i) => i.cost > 0));
 
   const byMethod = {};
   filtered.forEach((s) => { byMethod[s.method] = (byMethod[s.method] || 0) + s.total; });
@@ -2323,16 +2394,16 @@ function PanelTab({ sales, categories, products }) {
     products.forEach((p) => {
       if (!p.stock || p.stock <= 0) return;
       unidades += p.stock;
-      const costUnit = p.cost > 0 ? p.cost : null;
-      if (costUnit) {
-        capitalCosto += costUnit * p.stock;
-        gananciaPotencial += (precioVenta(p) - costUnit) * p.stock;
+      const costoStock = costoStockProducto(p);
+      if (costoStock > 0) {
+        capitalCosto += costoStock;
+        gananciaPotencial += precioVenta(p) * p.stock - costoStock;
       } else {
         capitalCostoParcial = true;
       }
       valorVenta += precioVenta(p) * p.stock;
       const catName = categories.find((c) => c.id === p.categoryId)?.name || "Sin categoría";
-      const valorCat = (costUnit || precioVenta(p)) * p.stock;
+      const valorCat = costoStock > 0 ? costoStock : precioVenta(p) * p.stock;
       porCategoria[catName] = (porCategoria[catName] || 0) + valorCat;
     });
     return { capitalCosto, capitalCostoParcial, valorVenta, gananciaPotencial, unidades, porCategoria };
@@ -2350,7 +2421,7 @@ function PanelTab({ sales, categories, products }) {
   const sinMovimientoAll = conStock
     .map((p) => ({ p, r: rotacion[p.id] || { qtyVentana: 0, ultimaVenta: null } }))
     .filter((x) => x.r.qtyVentana === 0)
-    .map((x) => ({ ...x, capital: (x.p.cost > 0 ? x.p.cost : precioVenta(x.p)) * x.p.stock }))
+    .map((x) => { const c = costoStockProducto(x.p); return { ...x, capital: c > 0 ? c : precioVenta(x.p) * x.p.stock }; })
     .sort((a, b) => b.capital - a.capital);
   const sinMovimiento = sinMovimientoAll.slice(0, 12);
 
@@ -2461,6 +2532,126 @@ function MiniBarChart({ data, color, showEvery = 1 }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ---------------- Cargar stock (compras) ----------------
+
+function CargarStockTab({ products, compras, onCargar }) {
+  const [search, setSearch] = useState("");
+  const [seleccionado, setSeleccionado] = useState(null);
+  const [qty, setQty] = useState("");
+  const [costo, setCosto] = useState("");
+  const [okMsg, setOkMsg] = useState("");
+
+  const norm = (s) => (s || "").toLowerCase();
+  const resultados = search.trim()
+    ? products.filter((p) => norm(p.name).includes(norm(search)) || (p.barcode || "").includes(search.trim())).slice(0, 8)
+    : [];
+
+  const elegirProducto = (p) => {
+    setSeleccionado(p);
+    setSearch("");
+    setQty("");
+    setCosto(p.cost ? String(p.cost) : "");
+  };
+
+  const registrar = () => {
+    const qtyNum = parseInt(qty, 10);
+    const costoNum = parseFloat(costo);
+    if (!seleccionado || !qtyNum || qtyNum <= 0 || isNaN(costoNum) || costoNum < 0) return;
+    onCargar(seleccionado.id, qtyNum, costoNum);
+    setOkMsg(`Se cargaron ${qtyNum} un. de "${seleccionado.name}" a $${fmt(costoNum)} c/u.`);
+    setTimeout(() => setOkMsg(""), 3500);
+    setSeleccionado(null);
+    setQty("");
+    setCosto("");
+  };
+
+  const totalInvertidoHistorial = compras.reduce((a, c) => a + (c.total || 0), 0);
+
+  return (
+    <div>
+      <div style={{ fontSize: 12.5, color: "#8AA2BC", marginBottom: 14 }}>
+        Registrá acá cada vez que compres o repongas mercadería, con el costo real al que la compraste. Así, si el mismo
+        artículo lo comprás después más caro o más barato, las ventas que ya hiciste con el costo viejo no cambian:
+        primero se descuenta lo más viejo, y el precio nuevo se aplica recién cuando eso se termine.
+      </div>
+
+      {!seleccionado ? (
+        <div style={{ marginBottom: 16 }}>
+          <Field label="Buscar producto">
+            <input
+              autoFocus value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Nombre o código de barras..." style={inputStyle}
+            />
+          </Field>
+          {resultados.length > 0 && (
+            <div style={{ marginTop: 8, border: "1px solid #E1EAF4", borderRadius: 12, overflow: "hidden" }}>
+              {resultados.map((p) => (
+                <button key={p.id} onClick={() => elegirProducto(p)} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%",
+                  padding: "10px 12px", background: "#fff", border: "none", borderBottom: "1px solid #F1F5FA", textAlign: "left",
+                }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>{p.name}</span>
+                  <span style={{ fontSize: 12, color: "#8AA2BC" }}>Stock: {p.stock} {p.cost > 0 ? `· Costo: $${fmt(p.cost)}` : ""}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{seleccionado.name}</div>
+              <div style={{ fontSize: 12, color: "#8AA2BC" }}>Stock actual: {seleccionado.stock}</div>
+            </div>
+            <button onClick={() => setSeleccionado(null)} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={18} /></button>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+            <Field label="Cantidad que entró" style={{ flex: 1 }}>
+              <input autoFocus type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" style={inputStyle} />
+            </Field>
+            <Field label="Costo unitario" style={{ flex: 1 }}>
+              <input type="number" min="0" step="0.01" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="0.00" style={inputStyle} />
+            </Field>
+          </div>
+          {qty && costo && !isNaN(parseFloat(costo)) && (
+            <div style={{ fontSize: 12.5, color: "#5B7791", marginBottom: 10 }}>
+              Total de esta carga: <strong>${fmt((parseInt(qty, 10) || 0) * parseFloat(costo))}</strong>
+            </div>
+          )}
+          <button onClick={registrar} style={{ ...btn("primario", "lg"), width: "100%" }}>
+            <PackagePlus size={16} /> Registrar carga
+          </button>
+        </div>
+      )}
+
+      {okMsg && (
+        <div style={{ background: "#E9F7EF", color: "#1A7A44", border: "1px solid #BFE8CE", borderRadius: 10, padding: "10px 14px", fontSize: 13, marginBottom: 16 }}>
+          {okMsg}
+        </div>
+      )}
+
+      <Section title={`Historial de cargas${compras.length > 0 ? ` · $${fmt(totalInvertidoHistorial)} invertidos en total` : ""}`}>
+        {compras.length === 0 ? (
+          <EmptyState text="Todavía no registraste ninguna carga de stock." />
+        ) : (
+          compras.slice(0, 50).map((c) => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5FA" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{c.productName}</div>
+                <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>
+                  {new Date(c.date).toLocaleString("es-AR")} · {c.qty} un. a ${fmt(c.costoUnitario)}
+                </div>
+              </div>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>${fmt(c.total)}</div>
+            </div>
+          ))
+        )}
+      </Section>
     </div>
   );
 }
