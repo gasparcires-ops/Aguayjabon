@@ -5,7 +5,7 @@ import {
   Users, BarChart3, Tag, Percent, LogOut, Lock, ChevronRight, Sliders,
   Download, ScanBarcode, Upload, FileSpreadsheet, Banknote, MessageSquare,
   TrendingUp, Wand2, Smartphone, Landmark, MoreHorizontal, Copy, PackagePlus,
-  DollarSign, CircleAlert, Check, ClipboardList, Image as ImageIcon,
+  DollarSign, CircleAlert, Check, ClipboardList, Image as ImageIcon, Truck,
 } from "lucide-react";
 import { getData, setData, deleteData, uploadProductImage } from "./lib/storage";
 import { agregarLoteStock, sincronizarLotesConStock, consumirFIFO, restaurarLote, lotesEfectivos } from "./lib/lotes";
@@ -70,6 +70,7 @@ export default function PuntoDeVenta() {
   const [cajaHistorial, setCajaHistorial] = useState([]);
   const [observaciones, setObservaciones] = useState([]);
   const [compras, setCompras] = useState([]); // historial de cargas de stock (panel "Cargar stock")
+  const [productosMayoristas, setProductosMayoristas] = useState([]); // artículos propios del panel "Mayoristas" (no tocan stock ni catálogo normal)
   const [labelProduct, setLabelProduct] = useState(null);
   const [sheetLabelOpen, setSheetLabelOpen] = useState(false);
   const [priceListOpen, setPriceListOpen] = useState(false);
@@ -106,6 +107,7 @@ export default function PuntoDeVenta() {
     setCajaHistorial(await load("caja_historial", []));
     setObservaciones(await load("observaciones", []));
     setCompras(await load("compras", []));
+    setProductosMayoristas(await load("productos_mayoristas", []));
     setPresupuestoNextNum(await load("presupuesto_next_num", 1));
     setPresupuestos(await load("presupuestos", []));
   };
@@ -186,6 +188,7 @@ export default function PuntoDeVenta() {
   const saveAccountUsers = (n) => { setAccountUsers(n); persist("app_users", n); };
   const saveObservaciones = (n) => { setObservaciones(n); persist("observaciones", n); };
   const saveCompras = (n) => { setCompras(n); persist("compras", n); };
+  const saveProductosMayoristas = (n) => { setProductosMayoristas(n); persist("productos_mayoristas", n); };
 
   // Trae los productos más recientes de la base justo antes de escribir, para
   // no pisar cambios hechos desde otra pestaña/dispositivo mientras esta
@@ -306,14 +309,31 @@ export default function PuntoDeVenta() {
   const deleteSale = async (id) => {
     let freshSales = sales;
     let freshProducts = products;
+    let freshMayoristas = productosMayoristas;
     try {
       const fs = await getData("sales");
       if (fs !== null && fs !== undefined) freshSales = fs;
       const fp = await getData("products");
       if (fp !== null && fp !== undefined) freshProducts = fp;
+      const fm = await getData("productos_mayoristas");
+      if (fm !== null && fm !== undefined) freshMayoristas = fm;
     } catch (e) {}
     const sale = freshSales.find((s) => s.id === id);
     if (!sale) return;
+    if (sale.origen === "mayorista" && sale.source !== "stock") {
+      // Stock aparte: se devuelve al artículo del panel de mayoristas, no al
+      // stock ni al costeo FIFO normal.
+      const nextMayoristas = freshMayoristas.map((p) => {
+        const qtyVendida = sale.items.filter((i) => i.productId === p.id).reduce((a, i) => a + i.qty, 0);
+        return qtyVendida > 0 ? { ...p, stock: (p.stock || 0) + qtyVendida } : p;
+      });
+      saveProductosMayoristas(nextMayoristas);
+      saveSales(freshSales.filter((s) => s.id !== id));
+      return;
+    }
+    // Ventas a mayorista hechas desde el stock real (sale.source === "stock")
+    // devuelven el stock al producto de siempre, siguiendo la misma lógica de
+    // lotes FIFO que cualquier otra venta.
     const nextProducts = freshProducts.map((p) => {
       // suma TODAS las líneas de ese producto en la venta (antes solo tomaba
       // la primera, así que un producto pedido con dos variantes distintas
@@ -630,6 +650,98 @@ export default function PuntoDeVenta() {
     saveProducts(nextProducts);
     saveCompras(nextCompras);
   };
+
+  // ---- Mayoristas: artículos y ventas aparte, no tocan stock ni catálogo ----
+  const guardarProductoMayorista = async (formData) => {
+    const name = (formData.name || "").trim();
+    const price = parseFloat(formData.price);
+    const cost = parseFloat(formData.cost);
+    const stock = parseInt(formData.stock, 10);
+    if (!name || isNaN(price) || price < 0) return;
+    const data = {
+      name, price, cost: isNaN(cost) ? 0 : cost, stock: isNaN(stock) ? 0 : stock,
+    };
+    let freshMayoristas = productosMayoristas;
+    try {
+      const fm = await getData("productos_mayoristas");
+      if (fm !== null && fm !== undefined) freshMayoristas = fm;
+    } catch (e) {}
+    const next = formData.id
+      ? freshMayoristas.map((p) => (p.id === formData.id ? { ...p, ...data } : p))
+      : [...freshMayoristas, { id: uid(), ...data }];
+    saveProductosMayoristas(next);
+  };
+  const eliminarProductoMayorista = async (id) => {
+    let freshMayoristas = productosMayoristas;
+    try {
+      const fm = await getData("productos_mayoristas");
+      if (fm !== null && fm !== undefined) freshMayoristas = fm;
+    } catch (e) {}
+    saveProductosMayoristas(freshMayoristas.filter((p) => p.id !== id));
+  };
+  // Venta a mayorista: genera una venta normal (así suma en "Cómo vamos" y en
+  // lo vendido/ganancia). Puede salir de dos lugares distintos:
+  //  - "mayorista": del artículo propio de este panel (stock aparte).
+  //  - "stock": de un producto real de la tienda (mismo stock de siempre,
+  //    descontado por FIFO), pero al precio que se cobre acá, que puede ser
+  //    distinto del precio normal de venta.
+  const venderMayorista = async ({ source = "mayorista", productId, qty, price, method, cliente }) => {
+    if (!qty || qty <= 0 || isNaN(price) || price < 0 || !method) return;
+    let freshSales = sales;
+    try {
+      const fs = await getData("sales");
+      if (fs !== null && fs !== undefined) freshSales = fs;
+    } catch (e) {}
+
+    let item, total;
+    total = price * qty;
+
+    if (source === "stock") {
+      let freshProducts = products;
+      try {
+        const fp = await getData("products");
+        if (fp !== null && fp !== undefined) freshProducts = fp;
+      } catch (e) {}
+      const producto = freshProducts.find((p) => p.id === productId);
+      if (!producto) return;
+      const { lotes, costoUnitarioPromedio } = consumirFIFO(producto, qty);
+      const nextProducts = freshProducts.map((p) => (p.id === productId ? { ...p, stock: p.stock - qty, lotes } : p));
+      saveProducts(nextProducts);
+      item = { productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: producto.categoryId || null, cost: costoUnitarioPromedio };
+    } else {
+      let freshMayoristas = productosMayoristas;
+      try {
+        const fm = await getData("productos_mayoristas");
+        if (fm !== null && fm !== undefined) freshMayoristas = fm;
+      } catch (e) {}
+      const producto = freshMayoristas.find((p) => p.id === productId);
+      if (!producto) return;
+      const nextMayoristas = freshMayoristas.map((p) => (p.id === productId ? { ...p, stock: (p.stock || 0) - qty } : p));
+      saveProductosMayoristas(nextMayoristas);
+      item = { productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: null, cost: producto.cost || 0 };
+    }
+
+    const sale = {
+      id: uid(),
+      number: freshSales.length + 1,
+      date: new Date().toISOString(),
+      employeeId: activeEmployee ? activeEmployee.id : null,
+      employeeName: activeEmployee ? activeEmployee.name : null,
+      origen: "mayorista",
+      source, // "mayorista" (artículo propio) o "stock" (producto real de la tienda)
+      cliente: (cliente || "").trim(),
+      items: [item],
+      subtotal: total,
+      discountType: null, discountValue: 0, discountAmount: 0,
+      surchargeRate: 0, surchargeAmount: 0,
+      total,
+      method,
+      pending: false,
+    };
+    saveSales([sale, ...freshSales]);
+    return sale;
+  };
+
   const editarPrecioRapido = async (product, price) => {
     if (isNaN(price) || price < 0) return;
     await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? { ...p, price } : p)));
@@ -1021,6 +1133,7 @@ export default function PuntoDeVenta() {
           <div className="sidebar-nav-secondary">
             {[
               { id: "historial", label: "Historial", icon: Receipt },
+              { id: "mayoristas", label: "Mayoristas", icon: Truck },
               { id: "catalogoAdmin", label: "Catálogo", icon: ImageIcon },
               { id: "equipo", label: "Equipo", icon: Users },
               { id: "avisos", label: "Avisos", icon: MessageSquare },
@@ -1120,6 +1233,13 @@ export default function PuntoDeVenta() {
           <PresupuestosTab products={products} presupuestos={presupuestos} onGenerar={generarPresupuesto} onVer={setPresupuestoGenerado} onEliminar={eliminarPresupuesto} />
         )}
         {tab === "historial" && <HistorialTab sales={sales} onView={setViewingSale} onDelete={deleteSale} methodLabel={methodLabel} onMarcarPagado={marcarComoPagado} onConfirmar={marcarComoConfirmado} />}
+        {tab === "mayoristas" && (
+          <MayoristasTab
+            productosMayoristas={productosMayoristas} products={products} sales={sales} methodLabel={methodLabel} methodIcon={methodIcon}
+            onGuardarProducto={guardarProductoMayorista} onEliminarProducto={eliminarProductoMayorista}
+            onVender={venderMayorista} onDeleteVenta={deleteSale}
+          />
+        )}
         {tab === "catalogoAdmin" && (
           <CatalogoAdminTab products={products} categories={categories} groups={groups} openEditProduct={openEditProduct} onSetOferta={setProductOferta} />
         )}
@@ -2656,6 +2776,288 @@ function CargarStockTab({ products, compras, onCargar }) {
   );
 }
 
+// ---------------- Mayoristas ----------------
+// Panel aparte para vender a mayoristas: tiene sus propios artículos y su
+// propio stock, que NO tocan el stock de la tienda ni aparecen en el
+// catálogo público. Las ventas que se generan acá sí quedan registradas
+// junto con el resto (misma lista de "sales"), así que suman en "Cómo
+// vamos" y en el Panel de control como cualquier otra venta.
+
+function MayoristasTab({ productosMayoristas, products, sales, methodLabel, methodIcon, onGuardarProducto, onEliminarProducto, onVender, onDeleteVenta }) {
+  const [vista, setVista] = useState("vender"); // "vender" | "articulos"
+  const [form, setForm] = useState(null); // artículo en edición/alta
+
+  const ventasMayoristas = sales.filter((s) => s.origen === "mayorista");
+  const totalVendidoHistorico = ventasMayoristas.reduce((a, s) => a + s.total, 0);
+
+  return (
+    <div>
+      <div style={{ fontSize: 12.5, color: "#8AA2BC", marginBottom: 14 }}>
+        Podés vender un artículo propio de mayoristas (no se mezcla con "Productos" ni aparece en el catálogo online),
+        o algo que ya tengas en stock de la tienda, a otro precio. Lo que vendas acá siempre suma en "Cómo vamos" y en
+        el Panel de control, como cualquier otra venta.
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+        <Chip active={vista === "vender"} onClick={() => setVista("vender")}>Vender</Chip>
+        <Chip active={vista === "articulos"} onClick={() => setVista("articulos")}>Artículos mayoristas</Chip>
+      </div>
+
+      {vista === "articulos" && (
+        <ArticulosMayoristasPanel
+          productos={productosMayoristas}
+          form={form} setForm={setForm}
+          onGuardar={onGuardarProducto} onEliminar={onEliminarProducto}
+        />
+      )}
+
+      {vista === "vender" && (
+        <>
+          <VentaMayoristaPanel
+            productosMayoristas={productosMayoristas} products={products}
+            methodLabel={methodLabel} methodIcon={methodIcon}
+            onVender={onVender}
+          />
+
+          <div style={{ marginTop: 20 }}>
+            <Section title={`Ventas a mayoristas${ventasMayoristas.length > 0 ? ` · $${fmt(totalVendidoHistorico)} en total` : ""}`}>
+              {ventasMayoristas.length === 0 ? (
+                <EmptyState text="Todavía no registraste ventas a mayoristas." />
+              ) : (
+                ventasMayoristas.slice(0, 30).map((s) => (
+                  <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5FA" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>
+                        {s.items.map((i) => `${i.qty}x ${i.name}`).join(", ")}
+                        {s.cliente ? ` · ${s.cliente}` : ""}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>
+                        {new Date(s.date).toLocaleString("es-AR")} · {methodLabel[s.method] || s.method}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700 }}>${fmt(s.total)}</div>
+                      <IconBtn danger onClick={() => { if (confirm("¿Eliminar esta venta a mayorista? Esto devuelve el stock del artículo.")) onDeleteVenta(s.id); }}>
+                        <Trash2 size={13} />
+                      </IconBtn>
+                    </div>
+                  </div>
+                ))
+              )}
+            </Section>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ArticulosMayoristasPanel({ productos, form, setForm, onGuardar, onEliminar }) {
+  return (
+    <div>
+      {!form ? (
+        <button onClick={() => setForm({ name: "", price: "", cost: "", stock: "" })} style={{ ...btn("primario"), marginBottom: 14 }}>
+          <Plus size={15} /> Agregar artículo mayorista
+        </button>
+      ) : (
+        <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{form.id ? "Editar artículo" : "Nuevo artículo mayorista"}</div>
+            <button onClick={() => setForm(null)} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={18} /></button>
+          </div>
+          <Field label="Nombre" style={{ marginBottom: 10 }}>
+            <input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre del artículo" style={inputStyle} />
+          </Field>
+          <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+            <Field label="Costo" style={{ flex: 1 }}>
+              <input type="number" min="0" step="0.01" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} placeholder="0.00" style={inputStyle} />
+            </Field>
+            <Field label="Precio mayorista" style={{ flex: 1 }}>
+              <input type="number" min="0" step="0.01" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="0.00" style={inputStyle} />
+            </Field>
+          </div>
+          <Field label="Stock" style={{ marginBottom: 14 }}>
+            <input type="number" min="0" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" style={inputStyle} />
+          </Field>
+          <button onClick={() => { onGuardar(form); setForm(null); }} style={{ ...btn("primario", "lg"), width: "100%" }}>
+            Guardar
+          </button>
+        </div>
+      )}
+
+      {productos.length === 0 ? (
+        <EmptyState text="Todavía no cargaste ningún artículo mayorista." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {productos.map((p) => (
+            <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 14px" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{p.name}</div>
+                <div style={{ fontSize: 12, color: "#8AA2BC" }}>
+                  Stock: {p.stock} · Costo: ${fmt(p.cost)} · Precio: ${fmt(p.price)}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <IconBtn onClick={() => setForm({ id: p.id, name: p.name, price: String(p.price), cost: String(p.cost || ""), stock: String(p.stock || 0) })}><Pencil size={13} /></IconBtn>
+                <IconBtn danger onClick={() => { if (confirm(`¿Eliminar "${p.name}"? Esto no borra las ventas ya hechas.`)) onEliminar(p.id); }}><Trash2 size={13} /></IconBtn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, methodIcon, onVender }) {
+  const [source, setSource] = useState("mayorista"); // "mayorista" | "stock"
+  const [productId, setProductId] = useState("");
+  const [search, setSearch] = useState("");
+  const [qty, setQty] = useState("");
+  const [price, setPrice] = useState("");
+  const [method, setMethod] = useState(null);
+  const [cliente, setCliente] = useState("");
+  const [okMsg, setOkMsg] = useState("");
+
+  const lista = source === "mayorista" ? productosMayoristas : products;
+  const producto = lista.find((p) => p.id === productId) || null;
+
+  const norm = (s) => (s || "").toLowerCase();
+  const resultadosStock = source === "stock" && search.trim()
+    ? products.filter((p) => norm(p.name).includes(norm(search)) || (p.barcode || "").includes(search.trim())).slice(0, 8)
+    : [];
+
+  const cambiarFuente = (nueva) => {
+    setSource(nueva);
+    setProductId("");
+    setSearch("");
+    setPrice("");
+  };
+
+  const elegirProducto = (p) => {
+    setProductId(p.id);
+    setSearch("");
+    setPrice(String(p.price || ""));
+  };
+
+  const qtyNum = parseInt(qty, 10) || 0;
+  const priceNum = parseFloat(price) || 0;
+  const total = qtyNum * priceNum;
+  const alcanzaStock = producto && qtyNum > 0 && qtyNum <= (producto.stock || 0);
+
+  const confirmar = async () => {
+    if (!producto || !qtyNum || qtyNum <= 0 || !method) return;
+    await onVender({ source, productId: producto.id, qty: qtyNum, price: priceNum, method, cliente });
+    setOkMsg(`Venta registrada: ${qtyNum}x ${producto.name} · $${fmt(total)}`);
+    setTimeout(() => setOkMsg(""), 3500);
+    setQty(""); setMethod(null); setCliente(""); setProductId(""); setPrice("");
+  };
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        <Chip active={source === "mayorista"} onClick={() => cambiarFuente("mayorista")}>Artículo mayorista</Chip>
+        <Chip active={source === "stock"} onClick={() => cambiarFuente("stock")}>Del stock de la tienda</Chip>
+      </div>
+
+      {source === "mayorista" ? (
+        productosMayoristas.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: "#8AA2BC", marginBottom: 14 }}>
+            Todavía no cargaste artículos mayoristas. Andá a "Artículos mayoristas" para agregar el primero, o vendé desde el stock de la tienda.
+          </div>
+        ) : (
+          <Field label="Artículo" style={{ marginBottom: 10 }}>
+            <select value={productId} onChange={(e) => elegirProducto(productosMayoristas.find((p) => p.id === e.target.value))} style={inputStyle}>
+              <option value="">Elegí un artículo...</option>
+              {productosMayoristas.map((p) => <option key={p.id} value={p.id}>{p.name} (stock: {p.stock})</option>)}
+            </select>
+          </Field>
+        )
+      ) : (
+        <div style={{ marginBottom: 10 }}>
+          {producto ? (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F6F9FE", borderRadius: 10, padding: "10px 12px" }}>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 700 }}>{producto.name}</div>
+                <div style={{ fontSize: 12, color: "#8AA2BC" }}>Stock en la tienda: {producto.stock} · Precio normal: ${fmt(producto.price)}</div>
+              </div>
+              <button onClick={() => { setProductId(""); setPrice(""); }} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={18} /></button>
+            </div>
+          ) : (
+            <>
+              <Field label="Buscar producto de la tienda">
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Nombre o código de barras..." style={inputStyle} />
+              </Field>
+              {resultadosStock.length > 0 && (
+                <div style={{ marginTop: 8, border: "1px solid #E1EAF4", borderRadius: 12, overflow: "hidden" }}>
+                  {resultadosStock.map((p) => (
+                    <button key={p.id} onClick={() => elegirProducto(p)} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%",
+                      padding: "10px 12px", background: "#fff", border: "none", borderBottom: "1px solid #F1F5FA", textAlign: "left",
+                    }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 600 }}>{p.name}</span>
+                      <span style={{ fontSize: 12, color: "#8AA2BC" }}>Stock: {p.stock} · ${fmt(p.price)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        <Field label="Cantidad" style={{ flex: 1 }}>
+          <input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" style={inputStyle} />
+        </Field>
+        <Field label={source === "stock" ? "Precio al que lo vendés" : "Precio por unidad"} style={{ flex: 1 }}>
+          <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" style={inputStyle} />
+        </Field>
+      </div>
+      <Field label="Cliente (opcional)" style={{ marginBottom: 10 }}>
+        <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre del mayorista..." style={inputStyle} />
+      </Field>
+
+      {qtyNum > 0 && !alcanzaStock && (
+        <div style={{ fontSize: 12, color: "#A85C06", marginBottom: 10 }}>
+          Ojo: pediste {qtyNum} y {source === "stock" ? "el producto tiene" : "el artículo tiene"} {producto.stock} en stock.
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "10px 0" }}>
+        <span style={{ fontSize: 14, color: "#5B7791", fontWeight: 600 }}>TOTAL</span>
+        <span style={{ fontSize: 24, fontWeight: 800, color: "#1B4F9C" }}>${fmt(total)}</span>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+        {Object.keys(methodLabel).map((m) => {
+          const Icon = methodIcon[m];
+          const active = method === m;
+          return (
+            <button key={m} onClick={() => setMethod(m)} style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "10px 6px",
+              borderRadius: 10, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2",
+              background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5B7791", fontWeight: active ? 700 : 500,
+            }}>
+              <Icon size={13} /> {methodLabel[m]}
+            </button>
+          );
+        })}
+      </div>
+
+      <button onClick={confirmar} disabled={!producto || !qtyNum || !method} style={{ ...btn("primario", "lg"), width: "100%", opacity: producto && qtyNum && method ? 1 : 0.5 }}>
+        {!producto ? "Elegí un artículo" : !method ? "Elegí una forma de pago" : `Registrar venta · $${fmt(total)}`}
+      </button>
+
+      {okMsg && (
+        <div style={{ background: "#E9F7EF", color: "#1A7A44", border: "1px solid #BFE8CE", borderRadius: 10, padding: "10px 14px", fontSize: 13, marginTop: 10 }}>
+          {okMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, children }) {
   return (
     <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 14, marginBottom: 12 }}>
@@ -2763,7 +3165,14 @@ function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado, on
           <div key={s.id} style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => onView(s)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
-                <div style={{ fontSize: 13.5, fontWeight: 600 }}>Comprobante #{s.number}</div>
+                <div style={{ fontSize: 13.5, fontWeight: 600 }}>
+                  Comprobante #{s.number}
+                  {s.origen === "mayorista" && (
+                    <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, color: "#1B4F9C", background: "#E4ECFB", borderRadius: 999, padding: "2px 7px" }}>
+                      MAYORISTA{s.cliente ? ` · ${s.cliente}` : ""}
+                    </span>
+                  )}
+                </div>
                 <div style={{ fontSize: 12, color: "#8AA2BC" }}>
                   {new Date(s.date).toLocaleString("es-AR")} · {methodLabel[s.method]}{s.employeeName ? ` · ${s.employeeName}` : ""}
                   {s.paidAt ? " · pedido pagado al entregar" : ""}
@@ -2774,7 +3183,10 @@ function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado, on
             <IconBtn
               danger
               onClick={() => {
-                if (confirm(`¿Eliminar el comprobante #${s.number}? Esto devuelve el stock vendido a los productos.`)) onDelete(s.id);
+                const msg = s.origen === "mayorista"
+                  ? `¿Eliminar el comprobante #${s.number}? Esto devuelve el stock al artículo mayorista.`
+                  : `¿Eliminar el comprobante #${s.number}? Esto devuelve el stock vendido a los productos.`;
+                if (confirm(msg)) onDelete(s.id);
               }}
             >
               <Trash2 size={13} />
