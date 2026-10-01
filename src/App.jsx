@@ -685,7 +685,7 @@ export default function PuntoDeVenta() {
   //  - "stock": de un producto real de la tienda (mismo stock de siempre,
   //    descontado por FIFO), pero al precio que se cobre acá, que puede ser
   //    distinto del precio normal de venta.
-  const venderMayorista = async ({ source = "mayorista", productId, qty, price, method, cliente }) => {
+  const venderMayorista = async ({ source = "mayorista", productId, qty, price, cost, method, cliente }) => {
     if (!qty || qty <= 0 || isNaN(price) || price < 0 || !method) return;
     let freshSales = sales;
     try {
@@ -716,9 +716,13 @@ export default function PuntoDeVenta() {
       } catch (e) {}
       const producto = freshMayoristas.find((p) => p.id === productId);
       if (!producto) return;
-      const nextMayoristas = freshMayoristas.map((p) => (p.id === productId ? { ...p, stock: (p.stock || 0) - qty } : p));
+      // El costo de esta venta se puede ajustar en el momento (por si esta
+      // compra puntual salió a otro precio); eso además actualiza el costo
+      // de referencia del artículo para la próxima vez.
+      const costoUsado = cost != null && !isNaN(cost) ? cost : (producto.cost || 0);
+      const nextMayoristas = freshMayoristas.map((p) => (p.id === productId ? { ...p, stock: (p.stock || 0) - qty, cost: costoUsado } : p));
       saveProductosMayoristas(nextMayoristas);
-      item = { productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: null, cost: producto.cost || 0 };
+      item = { productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: null, cost: costoUsado };
     }
 
     const sale = {
@@ -2915,6 +2919,7 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
   const [search, setSearch] = useState("");
   const [qty, setQty] = useState("");
   const [price, setPrice] = useState("");
+  const [cost, setCost] = useState("");
   const [method, setMethod] = useState(null);
   const [cliente, setCliente] = useState("");
   const [okMsg, setOkMsg] = useState("");
@@ -2932,12 +2937,14 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
     setProductId("");
     setSearch("");
     setPrice("");
+    setCost("");
   };
 
   const elegirProducto = (p) => {
     setProductId(p.id);
     setSearch("");
     setPrice(String(p.price || ""));
+    setCost(p.cost ? String(p.cost) : "");
   };
 
   const qtyNum = parseInt(qty, 10) || 0;
@@ -2945,12 +2952,23 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
   const total = qtyNum * priceNum;
   const alcanzaStock = producto && qtyNum > 0 && qtyNum <= (producto.stock || 0);
 
+  // Costo que se va a usar para calcular la ganancia de esta venta.
+  // En "stock" sale siempre del FIFO real del producto (no se puede tocar a
+  // mano, para no desincronizar con el resto del sistema de costeo); en
+  // "mayorista" es el que carga/edita acá mismo.
+  const costNum = parseFloat(cost) || 0;
+  const costoPreviewStock = source === "stock" && producto && qtyNum > 0
+    ? consumirFIFO(producto, qtyNum).costoUnitarioPromedio
+    : 0;
+  const costoEfectivo = source === "stock" ? costoPreviewStock : costNum;
+  const gananciaPreview = producto && qtyNum > 0 ? (priceNum - costoEfectivo) * qtyNum : 0;
+
   const confirmar = async () => {
     if (!producto || !qtyNum || qtyNum <= 0 || !method) return;
-    await onVender({ source, productId: producto.id, qty: qtyNum, price: priceNum, method, cliente });
+    await onVender({ source, productId: producto.id, qty: qtyNum, price: priceNum, cost: source === "mayorista" ? costNum : undefined, method, cliente });
     setOkMsg(`Venta registrada: ${qtyNum}x ${producto.name} · $${fmt(total)}`);
     setTimeout(() => setOkMsg(""), 3500);
-    setQty(""); setMethod(null); setCliente(""); setProductId(""); setPrice("");
+    setQty(""); setMethod(null); setCliente(""); setProductId(""); setPrice(""); setCost("");
   };
 
   return (
@@ -3014,6 +3032,18 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
           <input type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" style={inputStyle} />
         </Field>
       </div>
+
+      {producto && source === "mayorista" && (
+        <Field label="Costo de esta compra (lo que te costó a vos)" style={{ marginBottom: 10 }}>
+          <input type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="0.00" style={inputStyle} />
+        </Field>
+      )}
+      {producto && source === "stock" && qtyNum > 0 && (
+        <div style={{ fontSize: 12, color: "#8AA2BC", marginBottom: 10 }}>
+          Costo real de ese stock (FIFO): ${fmt(costoPreviewStock)} por unidad — se calcula solo, no se puede editar.
+        </div>
+      )}
+
       <Field label="Cliente (opcional)" style={{ marginBottom: 10 }}>
         <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre del mayorista..." style={inputStyle} />
       </Field>
@@ -3028,6 +3058,12 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
         <span style={{ fontSize: 14, color: "#5B7791", fontWeight: 600 }}>TOTAL</span>
         <span style={{ fontSize: 24, fontWeight: 800, color: "#1B4F9C" }}>${fmt(total)}</span>
       </div>
+      {producto && qtyNum > 0 && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "-4px 0 10px" }}>
+          <span style={{ fontSize: 12, color: "#8AA2BC" }}>Ganancia estimada de esta venta</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: gananciaPreview >= 0 ? "#1A7A44" : "#C0392B" }}>${fmt(gananciaPreview)}</span>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
         {Object.keys(methodLabel).map((m) => {
