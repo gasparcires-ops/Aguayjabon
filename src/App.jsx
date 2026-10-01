@@ -3048,7 +3048,7 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
         <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre del mayorista..." style={inputStyle} />
       </Field>
 
-      {qtyNum > 0 && !alcanzaStock && (
+      {producto && qtyNum > 0 && !alcanzaStock && (
         <div style={{ fontSize: 12, color: "#A85C06", marginBottom: 10 }}>
           Ojo: pediste {qtyNum} y {source === "stock" ? "el producto tiene" : "el artículo tiene"} {producto.stock} en stock.
         </div>
