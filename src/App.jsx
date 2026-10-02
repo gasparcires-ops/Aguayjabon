@@ -320,20 +320,43 @@ export default function PuntoDeVenta() {
     } catch (e) {}
     const sale = freshSales.find((s) => s.id === id);
     if (!sale) return;
-    if (sale.origen === "mayorista" && sale.source !== "stock") {
-      // Stock aparte: se devuelve al artículo del panel de mayoristas, no al
-      // stock ni al costeo FIFO normal.
-      const nextMayoristas = freshMayoristas.map((p) => {
-        const qtyVendida = sale.items.filter((i) => i.productId === p.id).reduce((a, i) => a + i.qty, 0);
-        return qtyVendida > 0 ? { ...p, stock: (p.stock || 0) + qtyVendida } : p;
-      });
-      saveProductosMayoristas(nextMayoristas);
+    if (sale.origen === "mayorista") {
+      // Una venta a mayorista puede mezclar líneas de distinto origen (algunas
+      // de un artículo propio de mayoristas, otras del stock real de la
+      // tienda); cada línea sabe de dónde salió en `item.source` (las ventas
+      // viejas, de un solo artículo, lo heredan de `sale.source`).
+      const origenItem = (i) => i.source || sale.source || "mayorista";
+      const itemsStock = sale.items.filter((i) => origenItem(i) === "stock");
+      const itemsMayo = sale.items.filter((i) => origenItem(i) !== "stock");
+
+      if (itemsMayo.length > 0) {
+        // Stock aparte: se devuelve al artículo del panel de mayoristas, no al
+        // stock ni al costeo FIFO normal.
+        const nextMayoristas = freshMayoristas.map((p) => {
+          const qtyVendida = itemsMayo.filter((i) => i.productId === p.id).reduce((a, i) => a + i.qty, 0);
+          return qtyVendida > 0 ? { ...p, stock: (p.stock || 0) + qtyVendida } : p;
+        });
+        saveProductosMayoristas(nextMayoristas);
+      }
+      if (itemsStock.length > 0) {
+        // Líneas vendidas desde el stock real: vuelven al producto de
+        // siempre, siguiendo la misma lógica de lotes FIFO que cualquier otra
+        // venta.
+        const nextProducts = freshProducts.map((p) => {
+          const itemsProducto = itemsStock.filter((i) => i.productId === p.id);
+          const qtyVendida = itemsProducto.reduce((a, i) => a + i.qty, 0);
+          if (qtyVendida <= 0) return p;
+          const costoUnitario = itemsProducto[0] && itemsProducto[0].cost != null ? itemsProducto[0].cost : (p.cost || 0);
+          return restaurarLote(p, qtyVendida, costoUnitario, sale.date);
+        });
+        saveProducts(nextProducts);
+      }
       saveSales(freshSales.filter((s) => s.id !== id));
       return;
     }
-    // Ventas a mayorista hechas desde el stock real (sale.source === "stock")
-    // devuelven el stock al producto de siempre, siguiendo la misma lógica de
-    // lotes FIFO que cualquier otra venta.
+    // Ventas normales (no mayorista) devuelven el stock al producto de
+    // siempre, siguiendo la misma lógica de lotes FIFO que cualquier otra
+    // venta.
     const nextProducts = freshProducts.map((p) => {
       // suma TODAS las líneas de ese producto en la venta (antes solo tomaba
       // la primera, así que un producto pedido con dos variantes distintas
@@ -685,45 +708,60 @@ export default function PuntoDeVenta() {
   //  - "stock": de un producto real de la tienda (mismo stock de siempre,
   //    descontado por FIFO), pero al precio que se cobre acá, que puede ser
   //    distinto del precio normal de venta.
-  const venderMayorista = async ({ source = "mayorista", productId, qty, price, cost, method, cliente }) => {
-    if (!qty || qty <= 0 || isNaN(price) || price < 0 || !method) return;
+  // `cart` es un array de líneas { source, productId, qty, price, cost? },
+  // cada una pudiendo venir de un lugar distinto (artículo mayorista propio o
+  // stock real de la tienda) — así una sola venta puede llevar varios
+  // artículos mezclados, como cualquier venta normal.
+  const venderMayorista = async ({ cart, method, cliente }) => {
+    if (!Array.isArray(cart) || cart.length === 0 || !method) return;
     let freshSales = sales;
+    let freshProducts = products;
+    let freshMayoristas = productosMayoristas;
     try {
       const fs = await getData("sales");
       if (fs !== null && fs !== undefined) freshSales = fs;
+      const fp = await getData("products");
+      if (fp !== null && fp !== undefined) freshProducts = fp;
+      const fm = await getData("productos_mayoristas");
+      if (fm !== null && fm !== undefined) freshMayoristas = fm;
     } catch (e) {}
 
-    let item, total;
-    total = price * qty;
+    let workProducts = freshProducts;
+    let workMayoristas = freshMayoristas;
+    const items = [];
+    let total = 0;
+    let tocoStock = false;
+    let tocoMayoristas = false;
 
-    if (source === "stock") {
-      let freshProducts = products;
-      try {
-        const fp = await getData("products");
-        if (fp !== null && fp !== undefined) freshProducts = fp;
-      } catch (e) {}
-      const producto = freshProducts.find((p) => p.id === productId);
-      if (!producto) return;
-      const { lotes, costoUnitarioPromedio } = consumirFIFO(producto, qty);
-      const nextProducts = freshProducts.map((p) => (p.id === productId ? { ...p, stock: p.stock - qty, lotes } : p));
-      saveProducts(nextProducts);
-      item = { productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: producto.categoryId || null, cost: costoUnitarioPromedio };
-    } else {
-      let freshMayoristas = productosMayoristas;
-      try {
-        const fm = await getData("productos_mayoristas");
-        if (fm !== null && fm !== undefined) freshMayoristas = fm;
-      } catch (e) {}
-      const producto = freshMayoristas.find((p) => p.id === productId);
-      if (!producto) return;
-      // El costo de esta venta se puede ajustar en el momento (por si esta
-      // compra puntual salió a otro precio); eso además actualiza el costo
-      // de referencia del artículo para la próxima vez.
-      const costoUsado = cost != null && !isNaN(cost) ? cost : (producto.cost || 0);
-      const nextMayoristas = freshMayoristas.map((p) => (p.id === productId ? { ...p, stock: (p.stock || 0) - qty, cost: costoUsado } : p));
-      saveProductosMayoristas(nextMayoristas);
-      item = { productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: null, cost: costoUsado };
+    for (const linea of cart) {
+      const qty = Number(linea.qty) || 0;
+      const price = Number(linea.price) || 0;
+      if (qty <= 0 || isNaN(price) || price < 0) continue;
+
+      if (linea.source === "stock") {
+        const producto = workProducts.find((p) => p.id === linea.productId);
+        if (!producto) continue;
+        const { lotes, costoUnitarioPromedio } = consumirFIFO(producto, qty);
+        workProducts = workProducts.map((p) => (p.id === producto.id ? { ...p, stock: p.stock - qty, lotes } : p));
+        tocoStock = true;
+        items.push({ productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: producto.categoryId || null, cost: costoUnitarioPromedio, source: "stock" });
+      } else {
+        const producto = workMayoristas.find((p) => p.id === linea.productId);
+        if (!producto) continue;
+        // El costo de esta venta se puede ajustar en el momento (por si esta
+        // compra puntual salió a otro precio); eso además actualiza el costo
+        // de referencia del artículo para la próxima vez.
+        const costoUsado = linea.cost != null && !isNaN(linea.cost) ? Number(linea.cost) : (producto.cost || 0);
+        workMayoristas = workMayoristas.map((p) => (p.id === producto.id ? { ...p, stock: (p.stock || 0) - qty, cost: costoUsado } : p));
+        tocoMayoristas = true;
+        items.push({ productId: producto.id, name: producto.name, price, qty, modifiers: [], categoryId: null, cost: costoUsado, source: "mayorista" });
+      }
+      total += price * qty;
     }
+
+    if (items.length === 0) return;
+    if (tocoStock) saveProducts(workProducts);
+    if (tocoMayoristas) saveProductosMayoristas(workMayoristas);
 
     const sale = {
       id: uid(),
@@ -732,9 +770,8 @@ export default function PuntoDeVenta() {
       employeeId: activeEmployee ? activeEmployee.id : null,
       employeeName: activeEmployee ? activeEmployee.name : null,
       origen: "mayorista",
-      source, // "mayorista" (artículo propio) o "stock" (producto real de la tienda)
       cliente: (cliente || "").trim(),
-      items: [item],
+      items,
       subtotal: total,
       discountType: null, discountValue: 0, discountAmount: 0,
       surchargeRate: 0, surchargeAmount: 0,
@@ -2920,6 +2957,7 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
   const [qty, setQty] = useState("");
   const [price, setPrice] = useState("");
   const [cost, setCost] = useState("");
+  const [cart, setCart] = useState([]); // líneas ya agregadas a esta venta
   const [method, setMethod] = useState(null);
   const [cliente, setCliente] = useState("");
   const [okMsg, setOkMsg] = useState("");
@@ -2932,12 +2970,13 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
     ? products.filter((p) => norm(p.name).includes(norm(search)) || (p.barcode || "").includes(search.trim())).slice(0, 8)
     : [];
 
+  const limpiarLinea = () => {
+    setProductId(""); setSearch(""); setQty(""); setPrice(""); setCost("");
+  };
+
   const cambiarFuente = (nueva) => {
     setSource(nueva);
-    setProductId("");
-    setSearch("");
-    setPrice("");
-    setCost("");
+    limpiarLinea();
   };
 
   const elegirProducto = (p) => {
@@ -2949,30 +2988,62 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
 
   const qtyNum = parseInt(qty, 10) || 0;
   const priceNum = parseFloat(price) || 0;
-  const total = qtyNum * priceNum;
-  const alcanzaStock = producto && qtyNum > 0 && qtyNum <= (producto.stock || 0);
+  const lineaTotal = qtyNum * priceNum;
 
-  // Costo que se va a usar para calcular la ganancia de esta venta.
+  // Cuánto de este mismo artículo ya está puesto en el carrito, para avisar
+  // bien si entre todas las líneas se pasa del stock disponible.
+  const qtyEnCarrito = producto
+    ? cart.filter((l) => l.source === source && l.productId === producto.id).reduce((a, l) => a + l.qty, 0)
+    : 0;
+  const alcanzaStock = producto && qtyNum > 0 && (qtyEnCarrito + qtyNum) <= (producto.stock || 0);
+
+  // Costo que se va a usar para calcular la ganancia de esta línea.
   // En "stock" sale siempre del FIFO real del producto (no se puede tocar a
-  // mano, para no desincronizar con el resto del sistema de costeo); en
-  // "mayorista" es el que carga/edita acá mismo.
+  // mano, para no desincronizar con el resto del sistema de costeo) —
+  // simulando primero lo que ya se consumió en otras líneas de este mismo
+  // carrito; en "mayorista" es el que se carga/edita acá mismo.
   const costNum = parseFloat(cost) || 0;
   const costoPreviewStock = source === "stock" && producto && qtyNum > 0
-    ? consumirFIFO(producto, qtyNum).costoUnitarioPromedio
+    ? consumirFIFO(
+        qtyEnCarrito > 0 ? { ...producto, lotes: consumirFIFO(producto, qtyEnCarrito).lotes } : producto,
+        qtyNum
+      ).costoUnitarioPromedio
     : 0;
   const costoEfectivo = source === "stock" ? costoPreviewStock : costNum;
-  const gananciaPreview = producto && qtyNum > 0 ? (priceNum - costoEfectivo) * qtyNum : 0;
+  const gananciaLinea = producto && qtyNum > 0 ? (priceNum - costoEfectivo) * qtyNum : 0;
+
+  const agregarAlCarrito = () => {
+    if (!producto || !qtyNum || qtyNum <= 0 || isNaN(priceNum) || priceNum < 0) return;
+    setCart([...cart, {
+      key: uid(),
+      source,
+      productId: producto.id,
+      name: producto.name,
+      qty: qtyNum,
+      price: priceNum,
+      cost: source === "mayorista" ? costNum : costoPreviewStock,
+      stockDisponible: producto.stock || 0,
+    }]);
+    limpiarLinea();
+  };
+
+  const quitarDelCarrito = (key) => setCart(cart.filter((l) => l.key !== key));
+
+  const totalCarrito = cart.reduce((a, l) => a + l.price * l.qty, 0);
+  const gananciaCarrito = cart.reduce((a, l) => a + (l.price - (l.cost || 0)) * l.qty, 0);
 
   const confirmar = async () => {
-    if (!producto || !qtyNum || qtyNum <= 0 || !method) return;
-    await onVender({ source, productId: producto.id, qty: qtyNum, price: priceNum, cost: source === "mayorista" ? costNum : undefined, method, cliente });
-    setOkMsg(`Venta registrada: ${qtyNum}x ${producto.name} · $${fmt(total)}`);
-    setTimeout(() => setOkMsg(""), 3500);
-    setQty(""); setMethod(null); setCliente(""); setProductId(""); setPrice(""); setCost("");
+    if (cart.length === 0 || !method) return;
+    const resumen = cart.map((l) => `${l.qty}x ${l.name}`).join(", ");
+    await onVender({ cart: cart.map((l) => ({ source: l.source, productId: l.productId, qty: l.qty, price: l.price, cost: l.cost })), method, cliente });
+    setOkMsg(`Venta registrada: ${resumen} · $${fmt(totalCarrito)}`);
+    setTimeout(() => setOkMsg(""), 4000);
+    setCart([]); setMethod(null); setCliente(""); limpiarLinea();
   };
 
   return (
     <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#1B4F9C", marginBottom: 10 }}>Agregar artículo a la venta</div>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
         <Chip active={source === "mayorista"} onClick={() => cambiarFuente("mayorista")}>Artículo mayorista</Chip>
         <Chip active={source === "stock"} onClick={() => cambiarFuente("stock")}>Del stock de la tienda</Chip>
@@ -3044,46 +3115,77 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
         </div>
       )}
 
-      <Field label="Cliente (opcional)" style={{ marginBottom: 10 }}>
-        <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre del mayorista..." style={inputStyle} />
-      </Field>
-
       {producto && qtyNum > 0 && !alcanzaStock && (
         <div style={{ fontSize: 12, color: "#A85C06", marginBottom: 10 }}>
-          Ojo: pediste {qtyNum} y {source === "stock" ? "el producto tiene" : "el artículo tiene"} {producto.stock} en stock.
+          Ojo: entre esto y lo que ya tenés en el carrito son {qtyEnCarrito + qtyNum} y {source === "stock" ? "el producto tiene" : "el artículo tiene"} {producto.stock} en stock.
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "10px 0" }}>
-        <span style={{ fontSize: 14, color: "#5B7791", fontWeight: 600 }}>TOTAL</span>
-        <span style={{ fontSize: 24, fontWeight: 800, color: "#1B4F9C" }}>${fmt(total)}</span>
-      </div>
       {producto && qtyNum > 0 && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "-4px 0 10px" }}>
-          <span style={{ fontSize: 12, color: "#8AA2BC" }}>Ganancia estimada de esta venta</span>
-          <span style={{ fontSize: 14, fontWeight: 700, color: gananciaPreview >= 0 ? "#1A7A44" : "#C0392B" }}>${fmt(gananciaPreview)}</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "0 0 10px" }}>
+          <span style={{ fontSize: 12, color: "#8AA2BC" }}>Ganancia estimada de este artículo</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: gananciaLinea >= 0 ? "#1A7A44" : "#C0392B" }}>${fmt(gananciaLinea)}</span>
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
-        {Object.keys(methodLabel).map((m) => {
-          const Icon = methodIcon[m];
-          const active = method === m;
-          return (
-            <button key={m} onClick={() => setMethod(m)} style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "10px 6px",
-              borderRadius: 10, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2",
-              background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5B7791", fontWeight: active ? 700 : 500,
-            }}>
-              <Icon size={13} /> {methodLabel[m]}
-            </button>
-          );
-        })}
-      </div>
-
-      <button onClick={confirmar} disabled={!producto || !qtyNum || !method} style={{ ...btn("primario", "lg"), width: "100%", opacity: producto && qtyNum && method ? 1 : 0.5 }}>
-        {!producto ? "Elegí un artículo" : !method ? "Elegí una forma de pago" : `Registrar venta · $${fmt(total)}`}
+      <button onClick={agregarAlCarrito} disabled={!producto || !qtyNum} style={{ ...btn("secundario", "lg"), width: "100%", opacity: producto && qtyNum ? 1 : 0.5, marginBottom: 4 }}>
+        <Plus size={15} /> Agregar a la venta
       </button>
+
+      {cart.length > 0 && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #E1EAF4" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#1B4F9C", marginBottom: 8 }}>Esta venta ({cart.length} artículo{cart.length > 1 ? "s" : ""})</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+            {cart.map((l) => (
+              <div key={l.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F6F9FE", borderRadius: 10, padding: "8px 12px" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{l.qty}x {l.name}</div>
+                  <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>
+                    {l.source === "stock" ? "Del stock" : "Mayorista"} · ${fmt(l.price)} c/u
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700 }}>${fmt(l.price * l.qty)}</div>
+                  <button onClick={() => quitarDelCarrito(l.key)} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={16} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "10px 0" }}>
+            <span style={{ fontSize: 14, color: "#5B7791", fontWeight: 600 }}>TOTAL</span>
+            <span style={{ fontSize: 24, fontWeight: 800, color: "#1B4F9C" }}>${fmt(totalCarrito)}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", margin: "-4px 0 10px" }}>
+            <span style={{ fontSize: 12, color: "#8AA2BC" }}>Ganancia estimada de toda la venta</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: gananciaCarrito >= 0 ? "#1A7A44" : "#C0392B" }}>${fmt(gananciaCarrito)}</span>
+          </div>
+
+          <Field label="Cliente (opcional)" style={{ marginBottom: 10 }}>
+            <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nombre del mayorista..." style={inputStyle} />
+          </Field>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+            {Object.keys(methodLabel).map((m) => {
+              const Icon = methodIcon[m];
+              const active = method === m;
+              return (
+                <button key={m} onClick={() => setMethod(m)} style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "10px 6px",
+                  borderRadius: 10, fontSize: 12.5, border: active ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2",
+                  background: active ? "#E4ECFB" : "#fff", color: active ? "#1B4F9C" : "#5B7791", fontWeight: active ? 700 : 500,
+                }}>
+                  <Icon size={13} /> {methodLabel[m]}
+                </button>
+              );
+            })}
+          </div>
+
+          <button onClick={confirmar} disabled={!method} style={{ ...btn("primario", "lg"), width: "100%", opacity: method ? 1 : 0.5 }}>
+            {!method ? "Elegí una forma de pago" : `Registrar venta · $${fmt(totalCarrito)}`}
+          </button>
+        </div>
+      )}
 
       {okMsg && (
         <div style={{ background: "#E9F7EF", color: "#1A7A44", border: "1px solid #BFE8CE", borderRadius: 10, padding: "10px 14px", fontSize: 13, marginTop: 10 }}>
