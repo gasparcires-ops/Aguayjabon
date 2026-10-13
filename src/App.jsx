@@ -25,6 +25,21 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const precioVenta = (p) => (p && p.enOferta && p.precioOferta > 0 ? p.precioOferta : p ? p.price : 0);
 // Costo real de lo que queda en stock, sumando cada lote al costo que tenía
 // cuando entró (en vez de multiplicar todo el stock por el costo actual).
+// Un producto puede tener varios códigos de barras (por ejemplo, un mismo
+// desodorante en distintas fragancias, mismo precio): `barcode` es el
+// principal (el que se imprime en etiquetas) y `barcodesExtra` el resto.
+// Cada código extra puede venir asociado a un modificador (ej: la fragancia),
+// así al escanearlo se agrega directo esa variante. Se aceptan también los
+// guardados como texto simple (v20).
+const extraCode = (e) => (typeof e === "string" ? e : (e && e.code) || "");
+const extraMod = (e) => (typeof e === "string" ? "" : (e && e.modifier) || "");
+const codigosDe = (p) => [p.barcode, ...(p.barcodesExtra || []).map(extraCode)].filter(Boolean);
+// Nombre del modificador asociado a un código escaneado ("" si no tiene).
+const modDeCodigo = (p, code) => {
+  if (p.barcode === code) return p.barcodeMod || "";
+  const e = (p.barcodesExtra || []).find((x) => extraCode(x) === code);
+  return e ? extraMod(e) : "";
+};
 const costoStockProducto = (p) => lotesEfectivos(p).reduce((a, l) => a + l.qty * (l.costoUnitario || 0), 0);
 
 export default function PuntoDeVenta() {
@@ -583,7 +598,8 @@ export default function PuntoDeVenta() {
   };
   const openNewProduct = () => setProductForm({ name: "", price: "", stock: "", categoryId: "", modifiers: [], barcode: "", cost: "", costoLista: "", descuentoPct: "", imageUrl: "", description: "", enOferta: false, precioOferta: "" });
   const openEditProduct = (p) => setProductForm({
-    ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "",
+    ...p, price: String(p.price), stock: String(p.stock), modifiers: p.modifiers || [], barcode: p.barcode || "", barcodeMod: p.barcodeMod || "",
+    barcodesExtra: (p.barcodesExtra || []).map((e) => ({ code: extraCode(e), modifier: extraMod(e) })),
     cost: p.cost ? String(p.cost) : "", costoLista: p.costoLista ? String(p.costoLista) : "", descuentoPct: p.descuentoPct ? String(p.descuentoPct) : "",
     imageUrl: p.imageUrl || "", description: p.description || "", enOferta: !!p.enOferta, precioOferta: p.precioOferta ? String(p.precioOferta) : "",
   });
@@ -612,9 +628,17 @@ export default function PuntoDeVenta() {
     }
     let barcode = (formData.barcode || "").trim();
     if (!barcode) barcode = genBarcode(products);
+    const vistos = new Set([barcode]);
+    const barcodesExtra = [];
+    (formData.barcodesExtra || []).forEach((e) => {
+      const code = extraCode(e).trim();
+      if (!code || vistos.has(code)) return;
+      vistos.add(code);
+      barcodesExtra.push({ code, modifier: extraMod(e) });
+    });
     const precioOferta = parseFloat(formData.precioOferta);
     const data = {
-      name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode,
+      name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode, barcodeMod: formData.barcodeMod || "", barcodesExtra,
       cost, costoLista: costoListaFinal, descuentoPct: descuentoPctFinal, imageUrl: formData.imageUrl || "",
       description: (formData.description || "").trim(),
       enOferta: !!formData.enOferta && !isNaN(precioOferta) && precioOferta > 0,
@@ -858,7 +882,7 @@ export default function PuntoDeVenta() {
         const categoryId = ensureCategory(catName);
 
         const existingIdx = updated.findIndex((p) =>
-          (barcode && p.barcode === barcode) || (!barcode && normKey(p.name) === normKey(name))
+          (barcode && codigosDe(p).includes(barcode)) || (!barcode && normKey(p.name) === normKey(name))
         );
         if (existingIdx >= 0) {
           updated[existingIdx] = {
@@ -1019,9 +1043,12 @@ export default function PuntoDeVenta() {
   const handleScan = (code) => {
     const clean = code.trim();
     if (!clean) return;
-    const found = products.find((p) => p.barcode && p.barcode === clean);
+    const found = products.find((p) => codigosDe(p).includes(clean));
     if (found) {
-      handleProductTap(found);
+      const modNombre = modDeCodigo(found, clean);
+      const modObj = modNombre ? (found.modifiers || []).find((m) => m.name === modNombre) : null;
+      if (modObj) addToCart(found, [modObj]);
+      else handleProductTap(found);
       setSearch("");
       setScanMsg("");
     } else {
@@ -1831,7 +1858,7 @@ function ArticulosTab({ products, categories, groups, openNewProduct, openEditPr
   const filteredProducts = products
     .filter((p) => {
       const q = search.trim().toLowerCase();
-      if (q && !(p.name + " " + (catName(p.categoryId) || "") + " " + (p.barcode || "")).toLowerCase().includes(q)) return false;
+      if (q && !(p.name + " " + (catName(p.categoryId) || "") + " " + codigosDe(p).join(" ")).toLowerCase().includes(q)) return false;
       if (onlyPending && !isPending(p)) return false;
       return true;
     })
@@ -2708,7 +2735,7 @@ function CargarStockTab({ products, compras, onCargar }) {
 
   const norm = (s) => (s || "").toLowerCase();
   const resultados = search.trim()
-    ? products.filter((p) => norm(p.name).includes(norm(search)) || (p.barcode || "").includes(search.trim())).slice(0, 8)
+    ? products.filter((p) => norm(p.name).includes(norm(search)) || codigosDe(p).some((c) => c.includes(search.trim()))).slice(0, 8)
     : [];
 
   const elegirProducto = (p) => {
@@ -2967,7 +2994,7 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
 
   const norm = (s) => (s || "").toLowerCase();
   const resultadosStock = source === "stock" && search.trim()
-    ? products.filter((p) => norm(p.name).includes(norm(search)) || (p.barcode || "").includes(search.trim())).slice(0, 8)
+    ? products.filter((p) => norm(p.name).includes(norm(search)) || codigosDe(p).some((c) => c.includes(search.trim()))).slice(0, 8)
     : [];
 
   const limpiarLinea = () => {
@@ -3578,6 +3605,7 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
   const [catOpen, setCatOpen] = useState(false);
   const [margenDeseado, setMargenDeseado] = useState("40");
   const [conDescuento, setConDescuento] = useState(!!(form.costoLista && Number(form.costoLista) > 0));
+  const nombresMods = [...new Set((form.modifiers || []).map((m) => (m.name || "").trim()).filter(Boolean))];
   const addModifier = () => setForm({ ...form, modifiers: [...(form.modifiers || []), { name: "", price: "" }] });
   const updateModifier = (idx, key, val) => {
     const mods = [...form.modifiers];
@@ -3646,7 +3674,42 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
         )}
       </div>
       <Field label="Código de barras (opcional)">
-        <input value={form.barcode || ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} placeholder="Escaneá el producto con la pistola acá" style={inputStyle} />
+        <div style={{ display: "flex", gap: 6 }}>
+          <input value={form.barcode || ""} onChange={(e) => setForm({ ...form, barcode: e.target.value })} placeholder="Escaneá el producto con la pistola acá" style={{ ...inputStyle, flex: 2 }} />
+          {nombresMods.length > 0 && (
+            <select value={form.barcodeMod || ""} onChange={(e) => setForm({ ...form, barcodeMod: e.target.value })} style={{ ...inputStyle, flex: 1 }}>
+              <option value="">Sin modificador</option>
+              {nombresMods.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          )}
+        </div>
+      </Field>
+      <Field label="Otros códigos de barras (otras fragancias, tamaños, etc.)">
+        {(form.barcodesExtra || []).map((e, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            <input
+              value={extraCode(e)}
+              onChange={(ev) => setForm({ ...form, barcodesExtra: form.barcodesExtra.map((x, i) => (i === idx ? { code: ev.target.value, modifier: extraMod(x) } : x)) })}
+              onKeyDown={(ev) => { if (ev.key === "Enter") ev.preventDefault(); }}
+              placeholder="Escaneá el otro código acá" style={{ ...inputStyle, flex: 2 }}
+            />
+            {nombresMods.length > 0 && (
+              <select value={extraMod(e)} onChange={(ev) => setForm({ ...form, barcodesExtra: form.barcodesExtra.map((x, i) => (i === idx ? { code: extraCode(x), modifier: ev.target.value } : x)) })} style={{ ...inputStyle, flex: 1 }}>
+                <option value="">Sin modificador</option>
+                {nombresMods.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            )}
+            <button type="button" onClick={() => setForm({ ...form, barcodesExtra: form.barcodesExtra.filter((_, i) => i !== idx) })} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={16} /></button>
+          </div>
+        ))}
+        <button type="button" onClick={() => setForm({ ...form, barcodesExtra: [...(form.barcodesExtra || []), { code: "", modifier: "" }] })} style={{ ...btn("secundario", "sm") }}>
+          <Plus size={13} /> Agregar otro código
+        </button>
+        {nombresMods.length === 0 && (
+          <div style={{ fontSize: 11.5, color: "#8AA2BC", marginTop: 6 }}>
+            Para asociar cada código a una fragancia, primero cargá las fragancias como "Modificadores" más abajo.
+          </div>
+        )}
       </Field>
       <Field label="Categoría">
         <div style={{ position: "relative" }}>
