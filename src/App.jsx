@@ -2633,6 +2633,7 @@ function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
   const [modoComparar, setModoComparar] = useState("acumulado"); // "acumulado" | "diario"
   const [ordenProd, setOrdenProd] = useState("unidades"); // "unidades" | "ingresos" | "ganancia"
   const [busqProd, setBusqProd] = useState("");
+  const [verTodosDias, setVerTodosDias] = useState(false);
 
   // Ventas "reales": todo lo que ya salió de stock y no corre riesgo de cancelarse
   // (los pedidos del catálogo todavía sin confirmar por el negocio se excluyen).
@@ -2722,18 +2723,24 @@ function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
     const porDia = {};
     lineas.forEach((l) => {
       const k = l.fecha.toDateString();
-      porDia[k] = (porDia[k] || 0) + l.monto;
+      if (!porDia[k]) porDia[k] = { monto: 0, ganancia: 0, n: 0 };
+      porDia[k].monto += l.monto;
+      porDia[k].ganancia += l.ganancia;
+      porDia[k].n++;
     });
     const days = [];
     for (let i = diasGrafico - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dow = d.getDay();
+      const dato = porDia[d.toDateString()] || { monto: 0, ganancia: 0, n: 0 };
       days.push({
         label: String(d.getDate()),
-        sub: diasGrafico > 31 ? DIAS_LETRA[dow] : diasGrafico > 16 ? DIAS_LETRA[dow] : DIAS_CORTO[dow],
-        full: `${DIAS_SEMANA[dow]} ${d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })}`,
-        value: porDia[d.toDateString()] || 0,
+        sub: diasGrafico > 16 ? DIAS_LETRA[dow] : DIAS_CORTO[dow],
+        titulo: `${DIAS_SEMANA[dow]} ${d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })}`,
+        ventas: dato.n,
+        ganancia: dato.ganancia,
+        value: dato.monto,
         color: statsSemana.fuertes.includes(dow) ? "#1A9E5C" : "#1B4F9C",
       });
     }
@@ -2784,7 +2791,7 @@ function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
       const total = lineas
         .filter((l) => l.fecha.getMonth() === d.getMonth() && l.fecha.getFullYear() === d.getFullYear())
         .reduce((a, l) => a + l.monto, 0);
-      months.push({ label: d.toLocaleDateString("es-AR", { month: "short" }).replace(".", ""), full: nombreMes(d.getFullYear(), d.getMonth()), value: total, color: "#1B4F9C" });
+      months.push({ label: d.toLocaleDateString("es-AR", { month: "short" }).replace(".", ""), full: `${nombreMes(d.getFullYear(), d.getMonth())}: vendiste $${fmt(total)}`, value: total, color: "#1B4F9C" });
     }
     return months;
 
@@ -2937,10 +2944,30 @@ function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
           <MetricCard label="Ticket promedio" value={"$" + fmt(ticketPeriodo)} />
           {hayCostos && <MetricCard label="Ganancia del período" value={"$" + fmt(gananciaPeriodo)} />}
         </div>
-        <MiniBarChart data={dailySeries} avg={promDiaPeriodo} showEvery={diasGrafico <= 14 ? 1 : diasGrafico <= 30 ? 2 : diasGrafico <= 60 ? 5 : 10} />
+        <MiniBarChart data={dailySeries} avg={promDiaPeriodo} mostrarGanancia={hayCostos} showEvery={diasGrafico <= 14 ? 1 : diasGrafico <= 30 ? 2 : diasGrafico <= 60 ? 5 : 10} />
+        <div style={{ fontSize: 11.5, color: "#8AA2BC", marginTop: 6 }}>Pasá el mouse o tocá una barra para ver lo vendido ese día.</div>
         <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: "#8AA2BC", marginTop: 8, flexWrap: "wrap" }}>
           <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#1A9E5C", borderRadius: 2, marginRight: 4 }} />Días fuertes de la semana</span>
           <span><span style={{ display: "inline-block", width: 14, borderTop: "2px dashed #A85C06", marginRight: 4, verticalAlign: "middle" }} />Promedio diario</span>
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "#5B7791", marginBottom: 6 }}>Detalle día por día</div>
+          <div style={{ display: "grid", gridTemplateColumns: hayCostos ? "1.4fr 0.6fr 1fr 1fr" : "1.4fr 0.6fr 1fr", gap: 8, fontSize: 11.5, fontWeight: 700, color: "#8AA2BC", paddingBottom: 4 }}>
+            <span>Día</span><span>Ventas</span><span style={{ textAlign: "right" }}>Vendido</span>{hayCostos && <span style={{ textAlign: "right" }}>Ganancia</span>}
+          </div>
+          {dailySeries.slice().reverse().slice(0, verTodosDias ? dailySeries.length : 10).map((d, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: hayCostos ? "1.4fr 0.6fr 1fr 1fr" : "1.4fr 0.6fr 1fr", gap: 8, padding: "7px 0", borderTop: "1px solid #F1F5FA", fontSize: 13, opacity: d.value > 0 ? 1 : 0.5 }}>
+              <span style={{ fontWeight: 600 }}>{d.titulo}</span>
+              <span>{d.ventas}</span>
+              <span style={{ textAlign: "right", fontWeight: 700 }}>${fmt(d.value)}</span>
+              {hayCostos && <span style={{ textAlign: "right", fontWeight: 700, color: d.ganancia >= 0 ? "#1A7A44" : "#C0392B" }}>${fmt(d.ganancia)}</span>}
+            </div>
+          ))}
+          {dailySeries.length > 10 && (
+            <button onClick={() => setVerTodosDias((v) => !v)} style={{ ...btn("secundario", "sm"), width: "100%", marginTop: 8 }}>
+              {verTodosDias ? "Ver menos" : `Ver los ${dailySeries.length} días`}
+            </button>
+          )}
         </div>
       </Section>
 
@@ -3129,13 +3156,27 @@ function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
 // Gráfico de barras simple. Cada dato: { label, sub?, value, color?, full? }.
 // `avg` dibuja una línea punteada con el promedio; `showValues` escribe el
 // monto arriba de cada barra.
-function MiniBarChart({ data, color = "#1B4F9C", showEvery = 1, avg = null, height = 90, showValues = false }) {
+function MiniBarChart({ data, color = "#1B4F9C", showEvery = 1, avg = null, height = 90, showValues = false, mostrarGanancia = false }) {
   const max = Math.max(1, ...data.map((d) => d.value), avg || 0);
+  const [sel, setSel] = useState(null);
+  const idx = sel !== null && sel < data.length ? sel : data.length - 1; // por defecto, la última barra (hoy)
+  const dSel = data[idx];
+  const textoDe = (d) => {
+    if (d.titulo) {
+      return `${d.titulo}: vendiste $${fmt(d.value)}` + (d.ventas !== undefined ? ` en ${d.ventas} venta${d.ventas !== 1 ? "s" : ""}` : "") + (mostrarGanancia && d.ganancia !== undefined ? ` · ganancia $${fmt(d.ganancia)}` : "");
+    }
+    return d.full || `${d.label}: $${fmt(d.value)}`;
+  };
   return (
     <div>
+      {dSel && (
+        <div style={{ background: "#F6F9FE", border: "1px solid #E1EAF4", borderRadius: 10, padding: "8px 12px", fontSize: 13, fontWeight: 600, color: "#10243D", marginBottom: 10, minHeight: 20 }}>
+          {textoDe(dSel)}
+        </div>
+      )}
       <div style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 3, height }}>
         {data.map((d, i) => (
-          <div key={i} title={d.full || `${d.label}: $${fmt(d.value)}`} style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", minWidth: 0 }}>
+          <div key={i} title={textoDe(d)} onMouseEnter={() => setSel(i)} onClick={() => setSel(i)} style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", minWidth: 0, cursor: "pointer", opacity: i === idx ? 1 : 0.8 }}>
             {showValues && d.value > 0 && <div style={{ fontSize: 9, color: "#5B7791", marginBottom: 2, whiteSpace: "nowrap" }}>{abrev(d.value)}</div>}
             <div style={{
               width: "100%", minHeight: d.value > 0 ? 3 : 0, height: `${(d.value / max) * (showValues ? 85 : 100)}%`,
