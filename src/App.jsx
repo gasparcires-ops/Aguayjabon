@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { getData, setData, deleteData, uploadProductImage } from "./lib/storage";
 import { agregarLoteStock, sincronizarLotesConStock, consumirFIFO, restaurarLote, lotesEfectivos } from "./lib/lotes";
+import { coincide, buscar } from "./lib/buscar";
 import * as XLSX from "xlsx";
 import JsBarcode from "jsbarcode";
 import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
@@ -1031,7 +1032,7 @@ export default function PuntoDeVenta() {
   };
 
   const filteredProducts = products.filter((p) => {
-    const matchesSearch = (p.name + " " + (p.category || "")).toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = coincide(search, p.name + " " + (categories.find((c) => c.id === p.categoryId)?.name || "") + " " + codigosDe(p).join(" "));
     const matchesCat = catFilter === "all" || p.categoryId === catFilter;
     return matchesSearch && matchesCat;
   });
@@ -1253,6 +1254,8 @@ export default function PuntoDeVenta() {
                 soldToday={soldToday}
                 productsCount={products.length}
                 pendingCount={pendingProductsCount}
+                products={products} categories={categories}
+                onEditProduct={(p) => { setTab("articulos"); openEditProduct(p); }}
                 pedidosWebCount={pedidosWebSinConfirmar}
                 setTab={setTab}
                 onCargarProducto={() => { setTab("articulos"); openNewProduct(); }}
@@ -1292,7 +1295,7 @@ export default function PuntoDeVenta() {
           <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} methodLabel={methodLabel} />
         )}
         {tab === "panel" && (
-          <PanelTab sales={sales} categories={categories} products={products} />
+          <PanelTab sales={sales} categories={categories} products={products} methodLabel={methodLabel} onEditProduct={(p) => { setTab("articulos"); openEditProduct(p); }} />
         )}
         {tab === "cargarStock" && (
           <CargarStockTab products={products} compras={compras} onCargar={cargarStockConCosto} />
@@ -1455,7 +1458,7 @@ function saludoSegunHora() {
   return "Buenas noches";
 }
 
-function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendingCount, pedidosWebCount, setTab, onCargarProducto }) {
+function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendingCount, pedidosWebCount, setTab, onCargarProducto, products, categories, onEditProduct }) {
   const fecha = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
   const fechaCap = fecha.charAt(0).toUpperCase() + fecha.slice(1);
 
@@ -1504,11 +1507,15 @@ function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendin
           <div style={{ fontSize: 26, fontWeight: 900, color: C.texto }}>{productsCount}</div>
           <div style={{ fontSize: 12, color: C.textoTenue, marginTop: 4 }}>Ordenados por nombre</div>
         </div>
-        <div style={{ ...card(), background: pendingCount > 0 ? C.ambarSuave : "#fff", border: pendingCount > 0 ? `1.5px solid ${C.ambarBorde}` : card().border }}>
+        <div onClick={() => { const el = document.getElementById("alertas-inicio"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ ...card(), cursor: "pointer", background: pendingCount > 0 ? C.ambarSuave : "#fff", border: pendingCount > 0 ? `1.5px solid ${C.ambarBorde}` : card().border }}>
           <div style={{ fontSize: 13, color: pendingCount > 0 ? C.ambar : C.textoSuave, fontWeight: 600, marginBottom: 6 }}>Necesitan atención</div>
           <div style={{ fontSize: 26, fontWeight: 900, color: pendingCount > 0 ? C.ambar : C.texto }}>{pendingCount}</div>
-          <div style={{ fontSize: 12, color: pendingCount > 0 ? "#8A5A0A" : C.textoTenue, marginTop: 4 }}>Poco stock o sin precio</div>
+          <div style={{ fontSize: 12, color: pendingCount > 0 ? "#8A5A0A" : C.textoTenue, marginTop: 4 }}>Sin precio o sin costo · tocá para ver</div>
         </div>
+      </div>
+
+      <div id="alertas-inicio">
+        <AlertasProductos products={products || []} categories={categories || []} onEdit={onEditProduct} titulo="ALERTAS DE PRODUCTOS" />
       </div>
 
       <div style={{ fontSize: 13, fontWeight: 800, color: C.textoSuave, letterSpacing: 0.4, marginBottom: 10 }}>¿QUÉ QUERÉS HACER?</div>
@@ -1746,7 +1753,7 @@ function CatalogoAdminTab({ products, categories, groups, openEditProduct, onSet
 
   const disponibles = products
     .filter((p) => p.price > 0 && p.stock > 0)
-    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()));
+    .filter((p) => coincide(search, p.name));
   const noDisponibles = products.filter((p) => !(p.price > 0 && p.stock > 0)).length;
 
   const porGrupo = {};
@@ -1857,8 +1864,7 @@ function ArticulosTab({ products, categories, groups, openNewProduct, openEditPr
 
   const filteredProducts = products
     .filter((p) => {
-      const q = search.trim().toLowerCase();
-      if (q && !(p.name + " " + (catName(p.categoryId) || "") + " " + codigosDe(p).join(" ")).toLowerCase().includes(q)) return false;
+      if (!coincide(search, p.name + " " + (catName(p.categoryId) || "") + " " + codigosDe(p).join(" "))) return false;
       if (onlyPending && !isPending(p)) return false;
       return true;
     })
@@ -1884,23 +1890,8 @@ function ArticulosTab({ products, categories, groups, openNewProduct, openEditPr
         <>
           <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
             <MetricCard label="Productos" value={products.length} />
-            <MetricCard label="Stock bajo" value={lowStock} warn={lowStock > 0} />
           </div>
-          {pendingCount > 0 && (
-            <button
-              onClick={() => setOnlyPending((v) => !v)}
-              style={{
-                width: "100%", padding: "10px 12px", borderRadius: 10, marginBottom: 14, display: "flex", alignItems: "center", gap: 8,
-                border: onlyPending ? "1.5px solid #A85C06" : "1px solid #FBE3B8", background: onlyPending ? "#FDF0DC" : "#FFFBF2",
-              }}
-            >
-              <CircleAlert size={16} style={{ color: "#A85C06", flexShrink: 0 }} />
-              <span style={{ fontSize: 12.5, color: "#92600B", fontWeight: 600, textAlign: "left", flex: 1 }}>
-                {pendingCount} producto{pendingCount !== 1 ? "s" : ""} sin precio o costo cargado
-              </span>
-              <span style={{ fontSize: 11.5, color: "#A85C06", fontWeight: 700 }}>{onlyPending ? "Ver todos" : "Cargar precios"}</span>
-            </button>
-          )}
+          <AlertasProductos products={products} categories={categories} onEdit={openEditProduct} titulo="ALERTAS (tocá una para ver cuáles son)" />
           <button onClick={openNewProduct} style={{ ...btn("primario", "lg"), width: "100%", marginBottom: 8 }}>
             <Plus size={18} /> Agregar producto
           </button>
@@ -2081,7 +2072,7 @@ function ArticulosTab({ products, categories, groups, openNewProduct, openEditPr
 function CategoryProductsModal({ category, products, onToggle, onClose }) {
   const [search, setSearch] = useState("");
   const filtered = products
-    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .filter((p) => coincide(search, p.name))
     .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
   return (
     <Overlay onClose={onClose}>
@@ -2169,6 +2160,110 @@ function GroupFormModal({ form, setForm, onSave, onClose }) {
   );
 }
 
+// ---------------- Alertas de productos (botones que despliegan la lista) ----------------
+const MARGEN_MINIMO = 30; // % sobre el costo (misma cuenta que el "Margen" que se ve en cada producto)
+
+function calcularAlertas(products) {
+  const margen = (p) => (p.cost > 0 && p.price > 0 ? ((p.price - p.cost) / p.cost) * 100 : null);
+  const porNombre = (a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" });
+  return [
+    {
+      id: "sinStock", label: "Sin stock",
+      items: products.filter((p) => (p.stock || 0) <= 0).sort(porNombre),
+      detalle: () => "Stock: 0",
+    },
+    {
+      id: "stockBajo", label: `Stock bajo (1 a ${LOW_STOCK})`,
+      items: products.filter((p) => p.stock > 0 && p.stock <= LOW_STOCK).sort((a, b) => a.stock - b.stock || porNombre(a, b)),
+      detalle: (p) => `Quedan ${p.stock}`,
+    },
+    {
+      id: "sinPrecio", label: "Sin precio",
+      items: products.filter((p) => !p.price || p.price <= 0).sort(porNombre),
+      detalle: (p) => (p.cost > 0 ? `Costo $${fmt(p.cost)}` : "Sin precio ni costo"),
+    },
+    {
+      id: "sinCosto", label: "Sin costo",
+      items: products.filter((p) => p.price > 0 && (!p.cost || p.cost <= 0)).sort(porNombre),
+      detalle: (p) => `Precio $${fmt(p.price)} · no se puede calcular la ganancia`,
+    },
+    {
+      id: "margenBajo", label: `Margen menor a ${MARGEN_MINIMO}%`,
+      items: products.filter((p) => { const m = margen(p); return m !== null && m < MARGEN_MINIMO; }).sort((a, b) => margen(a) - margen(b)),
+      detalle: (p) => `Margen ${margen(p).toFixed(0)}% · costo $${fmt(p.cost)} · precio $${fmt(p.price)}`,
+    },
+  ];
+}
+
+function AlertasProductos({ products, categories, onEdit, titulo }) {
+  const [abierta, setAbierta] = useState(null);
+  const [busq, setBusq] = useState("");
+  const alertas = useMemo(() => calcularAlertas(products), [products]);
+  const activa = alertas.find((a) => a.id === abierta) || null;
+  const total = alertas.reduce((acc, a) => acc + a.items.length, 0);
+  const catName = (id) => (categories || []).find((c) => c.id === id)?.name;
+  const lista = activa ? buscar(activa.items, busq, (p) => p.name + " " + (catName(p.categoryId) || "") + " " + codigosDe(p).join(" ")) : [];
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {titulo && <div style={{ fontSize: 13, fontWeight: 800, color: "#5B7791", letterSpacing: 0.4, marginBottom: 8 }}>{titulo}</div>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {alertas.map((a) => {
+          const hay = a.items.length > 0;
+          const sel = abierta === a.id;
+          return (
+            <button
+              key={a.id}
+              disabled={!hay}
+              onClick={() => { setAbierta(sel ? null : a.id); setBusq(""); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 700,
+                border: sel ? "1.5px solid #A85C06" : hay ? "1px solid #FBE3B8" : "1px solid #E1EAF4",
+                background: sel ? "#FDF0DC" : hay ? "#FFFBF2" : "#F6F9FE",
+                color: hay ? "#A85C06" : "#8AA2BC", opacity: hay ? 1 : 0.7, cursor: hay ? "pointer" : "default",
+              }}
+            >
+              {hay && <CircleAlert size={14} />}
+              {a.label} · {a.items.length}
+            </button>
+          );
+        })}
+      </div>
+      {total === 0 && <div style={{ fontSize: 12, color: "#8AA2BC", marginTop: 8 }}>Todo en orden: no hay productos con alertas.</div>}
+
+      {activa && (
+        <div style={{ marginTop: 10, background: "#fff", border: "1px solid #FBE3B8", borderRadius: 12, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#A85C06" }}>{activa.label}: {activa.items.length} producto{activa.items.length !== 1 ? "s" : ""}</div>
+            <button onClick={() => setAbierta(null)} style={{ border: "none", background: "none", color: "#8AA2BC" }}><X size={16} /></button>
+          </div>
+          {activa.items.length > 6 && (
+            <input value={busq} onChange={(e) => setBusq(e.target.value)} placeholder="Buscar dentro de esta lista..." style={{ ...inputStyle, marginBottom: 8 }} />
+          )}
+          <div style={{ maxHeight: 340, overflowY: "auto" }}>
+            {lista.length === 0 && <div style={{ fontSize: 12.5, color: "#8AA2BC", padding: 8 }}>Ninguno coincide con la búsqueda.</div>}
+            {lista.map((p) => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid #F1F5FA" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                  <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>
+                    {catName(p.categoryId) ? catName(p.categoryId) + " · " : ""}{activa.detalle(p)}
+                  </div>
+                </div>
+                {onEdit && (
+                  <button onClick={() => onEdit(p)} style={{ ...btn("secundario", "sm"), flexShrink: 0 }}>
+                    <Pencil size={13} /> Editar
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MetricCard({ label, value, warn }) {
   return (
     <div style={{ flex: 1, background: warn ? "#FDF0DC" : "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: "12px 14px" }}>
@@ -2214,7 +2309,7 @@ function PresupuestosTab({ products, presupuestos, onGenerar, onVer, onEliminar 
   const [validez, setValidez] = useState("7");
 
   const filtered = products
-    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .filter((p) => coincide(search, p.name))
     .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
 
   const setQtyFor = (id, val) => {
@@ -2513,8 +2608,31 @@ function diasDesde(fecha) {
   return Math.max(0, Math.floor((now - d) / (1000 * 60 * 60 * 24)));
 }
 
-function PanelTab({ sales, categories, products }) {
+const DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const DIAS_CORTO = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+const DIAS_LETRA = ["D", "L", "M", "X", "J", "V", "S"];
+const ORDEN_SEMANA = [1, 2, 3, 4, 5, 6, 0]; // lunes a domingo
+const mesKey = (d) => d.getFullYear() + "-" + d.getMonth();
+const nombreMes = (y, m) => {
+  const t = new Date(y, m, 1).toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+const abrev = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace(".0", "") + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n)));
+const variacion = (a, b) => (b > 0 ? ((a - b) / b) * 100 : null);
+
+function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
+  const hoy = new Date();
   const [ventana, setVentana] = useState(30); // días para calcular rotación
+  const [origenF, setOrigenF] = useState("todos");
+  const [pagoF, setPagoF] = useState("todos");
+  const [catF, setCatF] = useState("todas");
+  const [diasGrafico, setDiasGrafico] = useState(30);
+  const [semanasProm, setSemanasProm] = useState(8); // 0 = todo el historial
+  const [mesA, setMesA] = useState(mesKey(hoy));
+  const [mesB, setMesB] = useState(mesKey(new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1)));
+  const [modoComparar, setModoComparar] = useState("acumulado"); // "acumulado" | "diario"
+  const [ordenProd, setOrdenProd] = useState("unidades"); // "unidades" | "ingresos" | "ganancia"
+  const [busqProd, setBusqProd] = useState("");
 
   // Ventas "reales": todo lo que ya salió de stock y no corre riesgo de cancelarse
   // (los pedidos del catálogo todavía sin confirmar por el negocio se excluyen).
@@ -2523,54 +2641,188 @@ function PanelTab({ sales, categories, products }) {
     [sales]
   );
 
+  const productoDe = useMemo(() => {
+    const m = {};
+    products.forEach((p) => { m[p.id] = p; });
+    return m;
+  }, [products]);
+
+  const costoItem = (i) => {
+    if (i.cost != null) return i.cost;
+    const p = productoDe[i.productId];
+    return p && p.cost ? p.cost : 0;
+  };
+  const categoriaItem = (i) => {
+    if (i.categoryId != null) return i.categoryId;
+    const p = productoDe[i.productId];
+    return p ? p.categoryId : null;
+  };
+
+  // Una "línea" por venta que pasa los filtros (origen, forma de pago, categoría),
+  // con el monto y la ganancia ya calculados para ese filtro.
+  const lineas = useMemo(() => {
+    const out = [];
+    ventasValidas.forEach((s) => {
+      if (origenF !== "todos" && (s.origen || "mostrador") !== origenF) return;
+      if (pagoF !== "todos" && s.method !== pagoF) return;
+      let items = s.items;
+      let monto, ganancia;
+      if (catF !== "todas") {
+        items = s.items.filter((i) => categoriaItem(i) === catF);
+        if (items.length === 0) return;
+        monto = items.reduce((a, i) => a + i.price * i.qty, 0);
+        ganancia = items.reduce((a, i) => a + (i.price - costoItem(i)) * i.qty, 0);
+      } else {
+        monto = s.total;
+        ganancia = s.items.reduce((a, i) => a + (i.price - costoItem(i)) * i.qty, 0) - (s.discountAmount || 0);
+      }
+      out.push({ s, fecha: new Date(s.date), monto, ganancia, items });
+    });
+    return out;
+
+  }, [ventasValidas, origenF, pagoF, catF, productoDe]);
+
+  const hayCostos = products.some((p) => p.cost > 0) || sales.some((s) => s.items.some((i) => i.cost > 0));
+  const hayFiltros = origenF !== "todos" || pagoF !== "todos" || catF !== "todas";
+  const limpiarFiltros = () => { setOrigenF("todos"); setPagoF("todos"); setCatF("todas"); };
+
+  // ---- estadística por día de la semana (promedio por cada lunes, martes, etc.) ----
+  const statsSemana = useMemo(() => {
+    const fin = new Date(); fin.setHours(0, 0, 0, 0);
+    let ini = new Date(fin);
+    if (semanasProm > 0) {
+      ini.setDate(ini.getDate() - semanasProm * 7 + 1);
+    } else {
+      const min = lineas.reduce((m, l) => (!m || l.fecha < m ? l.fecha : m), null);
+      ini = min ? new Date(min.getFullYear(), min.getMonth(), min.getDate()) : fin;
+    }
+    const ocurr = [0, 0, 0, 0, 0, 0, 0];
+    for (let d = new Date(ini); d <= fin; d.setDate(d.getDate() + 1)) ocurr[d.getDay()]++;
+    const tot = [0, 0, 0, 0, 0, 0, 0], cant = [0, 0, 0, 0, 0, 0, 0], gan = [0, 0, 0, 0, 0, 0, 0];
+    lineas.forEach((l) => {
+      if (l.fecha < ini) return;
+      const dow = l.fecha.getDay();
+      tot[dow] += l.monto; cant[dow]++; gan[dow] += l.ganancia;
+    });
+    const filas = ORDEN_SEMANA.map((dow) => ({
+      dow, nombre: DIAS_SEMANA[dow], corto: DIAS_CORTO[dow], total: tot[dow], ventas: cant[dow], ganancia: gan[dow],
+      ocurr: ocurr[dow], prom: ocurr[dow] > 0 ? tot[dow] / ocurr[dow] : 0,
+    }));
+    const totalAll = tot.reduce((a, b) => a + b, 0);
+    const ventasAll = cant.reduce((a, b) => a + b, 0);
+    const diasAll = ocurr.reduce((a, b) => a + b, 0);
+    const ranking = filas.filter((f) => f.prom > 0).sort((a, b) => b.prom - a.prom);
+    const fuertes = ranking.slice(0, 2).map((f) => f.dow);
+    const flojo = ranking.length >= 4 ? ranking[ranking.length - 1].dow : null;
+    return { filas, totalAll, ventasAll, promGeneral: diasAll > 0 ? totalAll / diasAll : 0, ranking, fuertes, flojo };
+  }, [lineas, semanasProm]);
+
+  // ---- ventas por día (últimos N días), con el día de la semana ----
   const dailySeries = useMemo(() => {
+    const porDia = {};
+    lineas.forEach((l) => {
+      const k = l.fecha.toDateString();
+      porDia[k] = (porDia[k] || 0) + l.monto;
+    });
     const days = [];
-    for (let i = 29; i >= 0; i--) {
+    for (let i = diasGrafico - 1; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const key = d.toDateString();
-      const total = ventasValidas.filter((s) => new Date(s.date).toDateString() === key).reduce((a, s) => a + s.total, 0);
-      days.push({ label: d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }), value: total });
+      const dow = d.getDay();
+      days.push({
+        label: String(d.getDate()),
+        sub: diasGrafico > 31 ? DIAS_LETRA[dow] : diasGrafico > 16 ? DIAS_LETRA[dow] : DIAS_CORTO[dow],
+        full: `${DIAS_SEMANA[dow]} ${d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" })}`,
+        value: porDia[d.toDateString()] || 0,
+        color: statsSemana.fuertes.includes(dow) ? "#1A9E5C" : "#1B4F9C",
+      });
     }
     return days;
-  }, [ventasValidas]);
+  }, [lineas, diasGrafico, statsSemana.fuertes]);
+  const totalPeriodo = dailySeries.reduce((a, d) => a + d.value, 0);
+  const promDiaPeriodo = dailySeries.length ? totalPeriodo / dailySeries.length : 0;
+  const lineasPeriodo = useMemo(() => {
+    const desde = new Date(); desde.setHours(0, 0, 0, 0); desde.setDate(desde.getDate() - diasGrafico + 1);
+    return lineas.filter((l) => l.fecha >= desde);
+  }, [lineas, diasGrafico]);
+  const gananciaPeriodo = lineasPeriodo.reduce((a, l) => a + l.ganancia, 0);
+  const ticketPeriodo = lineasPeriodo.length ? lineasPeriodo.reduce((a, l) => a + l.monto, 0) / lineasPeriodo.length : 0;
+
+  // ---- comparar dos meses ----
+  const opcionesMes = useMemo(() => {
+    const out = [];
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+      out.push({ key: mesKey(d), label: nombreMes(d.getFullYear(), d.getMonth()) });
+    }
+    return out;
+
+  }, []);
+  const resumenMes = (key) => {
+    const [y, m] = key.split("-").map(Number);
+    const dias = new Date(y, m + 1, 0).getDate();
+    const arr = new Array(dias).fill(0);
+    let total = 0, n = 0, gan = 0;
+    lineas.forEach((l) => {
+      if (l.fecha.getFullYear() === y && l.fecha.getMonth() === m) {
+        arr[l.fecha.getDate() - 1] += l.monto;
+        total += l.monto; n++; gan += l.ganancia;
+      }
+    });
+    return { y, m, dias, arr, total, n, gan, ticket: n ? total / n : 0, nombre: nombreMes(y, m) };
+  };
+  const A = useMemo(() => resumenMes(mesA), [lineas, mesA]);
+  const B = useMemo(() => resumenMes(mesB), [lineas, mesB]);
+  const aEsMesActual = mesA === mesKey(hoy);
+  const diaHoy = hoy.getDate();
+  const parcialB = B.arr.slice(0, diaHoy).reduce((a, b) => a + b, 0);
 
   const monthlySeries = useMemo(() => {
     const months = [];
-    const now = new Date();
     for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const total = ventasValidas
-        .filter((s) => {
-          const sd = new Date(s.date);
-          return sd.getMonth() === d.getMonth() && sd.getFullYear() === d.getFullYear();
-        })
-        .reduce((a, s) => a + s.total, 0);
-      months.push({ label: d.toLocaleDateString("es-AR", { month: "short" }).replace(".", ""), value: total });
+      const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+      const total = lineas
+        .filter((l) => l.fecha.getMonth() === d.getMonth() && l.fecha.getFullYear() === d.getFullYear())
+        .reduce((a, l) => a + l.monto, 0);
+      months.push({ label: d.toLocaleDateString("es-AR", { month: "short" }).replace(".", ""), full: nombreMes(d.getFullYear(), d.getMonth()), value: total, color: "#1B4F9C" });
     }
     return months;
-  }, [ventasValidas]);
 
+  }, [lineas]);
+
+  // ---- rotación de productos ----
   const rotacion = useMemo(() => {
     const desde = new Date();
     desde.setDate(desde.getDate() - ventana);
     const map = {};
+    lineas.forEach((l) => {
+      if (l.fecha < desde) return;
+      l.items.forEach((i) => {
+        if (!map[i.productId]) map[i.productId] = { qty: 0, ingresos: 0, ganancia: 0 };
+        map[i.productId].qty += i.qty;
+        map[i.productId].ingresos += i.price * i.qty;
+        map[i.productId].ganancia += (i.price - costoItem(i)) * i.qty;
+      });
+    });
+    return map;
+
+  }, [lineas, ventana]);
+
+  // Para "sin movimiento" se miran todas las ventas (sin importar origen ni forma de pago).
+  const ultimaVenta = useMemo(() => {
+    const desde = new Date();
+    desde.setDate(desde.getDate() - ventana);
+    const map = {};
     ventasValidas.forEach((s) => {
-      const dentroVentana = new Date(s.date) >= desde;
+      const fecha = new Date(s.date);
       s.items.forEach((i) => {
-        if (!map[i.productId]) map[i.productId] = { qtyVentana: 0, revenueVentana: 0, ultimaVenta: null };
-        if (dentroVentana) {
-          map[i.productId].qtyVentana += i.qty;
-          map[i.productId].revenueVentana += i.price * i.qty;
-        }
-        const fecha = new Date(s.date);
-        if (!map[i.productId].ultimaVenta || fecha > map[i.productId].ultimaVenta) map[i.productId].ultimaVenta = fecha;
+        if (!map[i.productId]) map[i.productId] = { enVentana: false, ultima: null };
+        if (fecha >= desde) map[i.productId].enVentana = true;
+        if (!map[i.productId].ultima || fecha > map[i.productId].ultima) map[i.productId].ultima = fecha;
       });
     });
     return map;
   }, [ventasValidas, ventana]);
-
-  const hayCostos = products.some((p) => p.cost > 0);
 
   const stockInfo = useMemo(() => {
     let capitalCosto = 0;
@@ -2597,67 +2849,239 @@ function PanelTab({ sales, categories, products }) {
     return { capitalCosto, capitalCostoParcial, valorVenta, gananciaPotencial, unidades, porCategoria };
   }, [products, categories]);
 
-  const conStock = products.filter((p) => p.stock > 0);
+  const productosEnFiltro = catF === "todas" ? products : products.filter((p) => p.categoryId === catF);
 
-  const altaRotacion = conStock
-    .map((p) => ({ p, r: rotacion[p.id] || { qtyVentana: 0, revenueVentana: 0 } }))
-    .filter((x) => x.r.qtyVentana > 0)
-    .sort((a, b) => b.r.qtyVentana - a.r.qtyVentana)
-    .slice(0, 10);
-  const maxAlta = altaRotacion.length ? altaRotacion[0].r.qtyVentana : 1;
+  const ranking = productosEnFiltro
+    .map((p) => ({ p, r: rotacion[p.id] || { qty: 0, ingresos: 0, ganancia: 0 } }))
+    .filter((x) => x.r.qty > 0)
+    .filter((x) => coincide(busqProd, x.p.name));
+  const claveOrden = ordenProd === "ingresos" ? "ingresos" : ordenProd === "ganancia" ? "ganancia" : "qty";
+  ranking.sort((a, b) => b.r[claveOrden] - a.r[claveOrden]);
+  const altaRotacion = ranking.slice(0, 15);
+  const maxAlta = altaRotacion.length ? Math.max(1, altaRotacion[0].r[claveOrden]) : 1;
 
-  const sinMovimientoAll = conStock
-    .map((p) => ({ p, r: rotacion[p.id] || { qtyVentana: 0, ultimaVenta: null } }))
-    .filter((x) => x.r.qtyVentana === 0)
-    .map((x) => { const c = costoStockProducto(x.p); return { ...x, capital: c > 0 ? c : precioVenta(x.p) * x.p.stock }; })
+  const sinMovimientoAll = productosEnFiltro
+    .filter((p) => p.stock > 0 && !(ultimaVenta[p.id] && ultimaVenta[p.id].enVentana))
+    .map((p) => { const c = costoStockProducto(p); return { p, ultima: ultimaVenta[p.id] ? ultimaVenta[p.id].ultima : null, capital: c > 0 ? c : precioVenta(p) * p.stock }; })
+    .filter((x) => coincide(busqProd, x.p.name))
     .sort((a, b) => b.capital - a.capital);
   const sinMovimiento = sinMovimientoAll.slice(0, 12);
 
   const maxCat = Math.max(1, ...Object.values(stockInfo.porCategoria));
+  const categoriasOrd = categories.slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+
+  const Delta = ({ a, b, invertir }) => {
+    const v = variacion(a, b);
+    if (v === null) return <span style={{ fontSize: 11.5, color: "#8AA2BC" }}>{b === 0 && a > 0 ? "nuevo" : "—"}</span>;
+    const sube = v >= 0;
+    const bueno = invertir ? !sube : sube;
+    return (
+      <span style={{ fontSize: 12, fontWeight: 700, color: Math.abs(v) < 0.5 ? "#8AA2BC" : bueno ? "#1A7A44" : "#C0392B" }}>
+        {sube ? "▲" : "▼"} {Math.abs(v).toFixed(0)}%
+      </span>
+    );
+  };
+
+  const filaComparar = (label, a, b, esPlata = true) => (
+    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr auto", gap: 8, alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5FA", fontSize: 13 }}>
+      <span style={{ color: "#5B7791" }}>{label}</span>
+      <span style={{ fontWeight: 700, color: "#1B4F9C" }}>{esPlata ? "$" + fmt(a) : a}</span>
+      <span style={{ fontWeight: 700, color: "#5B7791" }}>{esPlata ? "$" + fmt(b) : b}</span>
+      <Delta a={a} b={b} />
+    </div>
+  );
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-        <MetricCard label="Capital invertido en stock" value={"$" + fmt(stockInfo.capitalCosto)} />
-        <MetricCard label="Valor de venta del stock" value={"$" + fmt(stockInfo.valorVenta)} />
-      </div>
-      {stockInfo.capitalCostoParcial && (
-        <div style={{ fontSize: 11.5, color: "#8AA2BC", margin: "6px 0 10px" }}>
-          * Hay productos sin costo cargado; para esos se usó el precio de venta en el cálculo.
+      <AlertasProductos products={products} categories={categories} onEdit={onEditProduct} titulo="ALERTAS DE PRODUCTOS (tocá una para ver cuáles son)" />
+
+      {/* ---- filtros globales ---- */}
+      <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 12, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#5B7791", letterSpacing: 0.4 }}>FILTROS (afectan los gráficos de ventas)</span>
+          {hayFiltros && <button onClick={limpiarFiltros} style={{ border: "none", background: "none", color: "#1B4F9C", fontSize: 12, fontWeight: 700 }}>Limpiar filtros</button>}
         </div>
-      )}
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-        {hayCostos && <MetricCard label="Ganancia potencial (si vendés todo el stock)" value={"$" + fmt(stockInfo.gananciaPotencial)} />}
-        <MetricCard label="Productos sin movimiento" value={sinMovimientoAll.length} warn={sinMovimientoAll.length > 0} />
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 12, color: "#8AA2BC", alignSelf: "center", minWidth: 62 }}>Origen</span>
+          {[["todos", "Todos"], ["mostrador", "Mostrador"], ["catalogo", "Catálogo web"], ["mayorista", "Mayoristas"]].map(([k, l]) => (
+            <Chip key={k} active={origenF === k} onClick={() => setOrigenF(k)}>{l}</Chip>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 12, color: "#8AA2BC", alignSelf: "center", minWidth: 62 }}>Pago</span>
+          <Chip active={pagoF === "todos"} onClick={() => setPagoF("todos")}>Todos</Chip>
+          {Object.keys(methodLabel || {}).map((m) => (
+            <Chip key={m} active={pagoF === m} onClick={() => setPagoF(m)}>{methodLabel[m]}</Chip>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "#8AA2BC", minWidth: 62 }}>Categoría</span>
+          <select value={catF} onChange={(e) => setCatF(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+            <option value="todas">Todas las categorías</option>
+            {categoriasOrd.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
       </div>
 
-      <Section title="Ventas por día (últimos 30 días)">
-        <MiniBarChart data={dailySeries} color="#1B4F9C" showEvery={5} />
+      {/* ---- ventas por día ---- */}
+      <Section title="Ventas por día">
+        <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+          {[14, 30, 60, 90].map((d) => <Chip key={d} active={diasGrafico === d} onClick={() => setDiasGrafico(d)}>Últimos {d} días</Chip>)}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <MetricCard label="Vendido en el período" value={"$" + fmt(totalPeriodo)} />
+          <MetricCard label="Promedio por día" value={"$" + fmt(promDiaPeriodo)} />
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <MetricCard label="Ventas realizadas" value={lineasPeriodo.length} />
+          <MetricCard label="Ticket promedio" value={"$" + fmt(ticketPeriodo)} />
+          {hayCostos && <MetricCard label="Ganancia del período" value={"$" + fmt(gananciaPeriodo)} />}
+        </div>
+        <MiniBarChart data={dailySeries} avg={promDiaPeriodo} showEvery={diasGrafico <= 14 ? 1 : diasGrafico <= 30 ? 2 : diasGrafico <= 60 ? 5 : 10} />
+        <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: "#8AA2BC", marginTop: 8, flexWrap: "wrap" }}>
+          <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#1A9E5C", borderRadius: 2, marginRight: 4 }} />Días fuertes de la semana</span>
+          <span><span style={{ display: "inline-block", width: 14, borderTop: "2px dashed #A85C06", marginRight: 4, verticalAlign: "middle" }} />Promedio diario</span>
+        </div>
+      </Section>
+
+      {/* ---- día de la semana ---- */}
+      <Section title="¿Qué días de la semana se vende más?">
+        <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+          {[[4, "4 semanas"], [8, "8 semanas"], [12, "12 semanas"], [0, "Todo el historial"]].map(([v, l]) => (
+            <Chip key={v} active={semanasProm === v} onClick={() => setSemanasProm(v)}>{l}</Chip>
+          ))}
+        </div>
+        {statsSemana.ventasAll === 0 ? (
+          <EmptyState text="Todavía no hay ventas en este período con estos filtros." />
+        ) : (
+          <>
+            {statsSemana.fuertes.length > 0 && (
+              <div style={{ background: "#E9F7EF", border: "1px solid #BFE8CE", color: "#1A7A44", borderRadius: 10, padding: "10px 12px", fontSize: 13, marginBottom: 12 }}>
+                Tus días más fuertes son <b>{statsSemana.fuertes.map((d) => DIAS_SEMANA[d]).join(" y ")}</b>
+                {" "}(en promedio ${fmt(statsSemana.ranking[0].prom)} por {DIAS_SEMANA[statsSemana.ranking[0].dow].toLowerCase()}).
+                {statsSemana.flojo !== null && <> El más flojo es <b>{DIAS_SEMANA[statsSemana.flojo]}</b>: buen día para promociones.</>}
+              </div>
+            )}
+            {statsSemana.ventasAll < 20 && (
+              <div style={{ fontSize: 12, color: "#A85C06", marginBottom: 10 }}>
+                Hay pocas ventas en este período ({statsSemana.ventasAll}); los promedios se van a ir afinando a medida que cargues más.
+              </div>
+            )}
+            <MiniBarChart
+              data={statsSemana.filas.map((f) => ({
+                label: f.corto, value: f.prom, full: `${f.nombre}: promedio $${fmt(f.prom)} (${f.ventas} ventas en ${f.ocurr} ${f.nombre.toLowerCase()}s)`,
+                color: statsSemana.fuertes.includes(f.dow) ? "#1A9E5C" : "#1B4F9C",
+              }))}
+              avg={statsSemana.promGeneral} height={120} showValues
+            />
+            <div style={{ fontSize: 11.5, color: "#8AA2BC", margin: "6px 0 10px" }}>
+              Cada barra es lo que vendés en promedio un día así (no el total). La línea punteada es el promedio general de todos los días.
+            </div>
+            {statsSemana.filas.slice().sort((a, b) => b.prom - a.prom).map((f) => (
+              <div key={f.dow} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid #F1F5FA", fontSize: 13 }}>
+                <span style={{ fontWeight: 600 }}>
+                  {f.nombre}
+                  {statsSemana.fuertes.includes(f.dow) && <span style={{ marginLeft: 6, fontSize: 10.5, background: "#E9F7EF", color: "#1A7A44", borderRadius: 6, padding: "1px 6px", fontWeight: 700 }}>DÍA FUERTE</span>}
+                  {statsSemana.flojo === f.dow && <span style={{ marginLeft: 6, fontSize: 10.5, background: "#FDF0DC", color: "#A85C06", borderRadius: 6, padding: "1px 6px", fontWeight: 700 }}>MÁS FLOJO</span>}
+                </span>
+                <span style={{ textAlign: "right" }}>
+                  <b>${fmt(f.prom)}</b> <span style={{ color: "#8AA2BC", fontSize: 11.5 }}>prom. · {f.ventas} ventas{statsSemana.totalAll > 0 ? ` · ${((f.total / statsSemana.totalAll) * 100).toFixed(0)}% del total` : ""}</span>
+                </span>
+              </div>
+            ))}
+          </>
+        )}
+      </Section>
+
+      {/* ---- comparar meses ---- */}
+      <Section title="Comparar meses">
+        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 150 }}>
+            <div style={{ fontSize: 11.5, color: "#1B4F9C", fontWeight: 700, marginBottom: 3 }}>● Mes A</div>
+            <select value={mesA} onChange={(e) => setMesA(e.target.value)} style={inputStyle}>
+              {opcionesMes.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1, minWidth: 150 }}>
+            <div style={{ fontSize: 11.5, color: "#8AA2BC", fontWeight: 700, marginBottom: 3 }}>● Mes B (contra el que comparás)</div>
+            <select value={mesB} onChange={(e) => setMesB(e.target.value)} style={inputStyle}>
+              {opcionesMes.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr auto", gap: 8, fontSize: 11.5, fontWeight: 700, color: "#8AA2BC", paddingBottom: 4 }}>
+          <span></span><span style={{ color: "#1B4F9C" }}>{A.nombre}</span><span>{B.nombre}</span><span>Cambio</span>
+        </div>
+        {filaComparar("Vendido", A.total, B.total)}
+        {filaComparar("Cantidad de ventas", A.n, B.n, false)}
+        {filaComparar("Ticket promedio", A.ticket, B.ticket)}
+        {hayCostos && filaComparar("Ganancia", A.gan, B.gan)}
+        {aEsMesActual && mesA !== mesB && (
+          <div style={{ fontSize: 12.5, color: "#5B7791", background: "#F6F9FE", borderRadius: 10, padding: "8px 12px", margin: "10px 0" }}>
+            Mismo período (del 1 al {diaHoy}): {A.nombre} lleva <b>${fmt(A.total)}</b> contra <b>${fmt(parcialB)}</b> de {B.nombre} hasta el día {diaHoy} <Delta a={A.total} b={parcialB} />
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 6, margin: "12px 0 8px" }}>
+          <Chip active={modoComparar === "acumulado"} onClick={() => setModoComparar("acumulado")}>Acumulado</Chip>
+          <Chip active={modoComparar === "diario"} onClick={() => setModoComparar("diario")}>Día por día</Chip>
+        </div>
+        <CompareChart a={A} b={B} modo={modoComparar} hoyDia={aEsMesActual ? diaHoy : null} />
       </Section>
 
       <Section title="Ventas por mes (últimos 12 meses)">
-        <MiniBarChart data={monthlySeries} color="#1B4F9C" showEvery={1} />
+        <MiniBarChart data={monthlySeries} showEvery={1} showValues height={110} />
       </Section>
 
+      {/* ---- stock y capital ---- */}
+      <Section title="Stock y capital">
+        <div style={{ display: "flex", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+          <MetricCard label="Capital invertido en stock" value={"$" + fmt(stockInfo.capitalCosto)} />
+          <MetricCard label="Valor de venta del stock" value={"$" + fmt(stockInfo.valorVenta)} />
+        </div>
+        {stockInfo.capitalCostoParcial && (
+          <div style={{ fontSize: 11.5, color: "#8AA2BC", margin: "6px 0 10px" }}>
+            * Hay productos sin costo cargado; para esos se usó el precio de venta en el cálculo.
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+          {hayCostos && <MetricCard label="Ganancia potencial (si vendés todo el stock)" value={"$" + fmt(stockInfo.gananciaPotencial)} />}
+          <MetricCard label="Productos sin movimiento" value={sinMovimientoAll.length} warn={sinMovimientoAll.length > 0} />
+        </div>
+      </Section>
+
+      {/* ---- productos ---- */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "18px 0 10px", flexWrap: "wrap" }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: "#5B7791" }}>Rotación de productos, ventana de:</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#5B7791" }}>Productos, ventana de:</span>
         {[30, 60, 90].map((d) => (
           <Chip key={d} active={ventana === d} onClick={() => setVentana(d)}>{d} días</Chip>
         ))}
       </div>
+      <input value={busqProd} onChange={(e) => setBusqProd(e.target.value)} placeholder="Buscar un producto en estas listas..." style={{ ...inputStyle, marginBottom: 10 }} />
 
-      <Section title="Alta rotación (más vendidos en unidades)">
+      <Section title="Alta rotación (lo que más sale)">
+        <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#8AA2BC", alignSelf: "center" }}>Ordenar por</span>
+          <Chip active={ordenProd === "unidades"} onClick={() => setOrdenProd("unidades")}>Unidades</Chip>
+          <Chip active={ordenProd === "ingresos"} onClick={() => setOrdenProd("ingresos")}>Lo que facturó</Chip>
+          {hayCostos && <Chip active={ordenProd === "ganancia"} onClick={() => setOrdenProd("ganancia")}>Ganancia</Chip>}
+        </div>
         {altaRotacion.length === 0 ? (
-          <EmptyState text="Todavía no hay ventas suficientes en esta ventana." />
+          <EmptyState text="Todavía no hay ventas suficientes en esta ventana con estos filtros." />
         ) : (
           altaRotacion.map(({ p, r }) => (
             <div key={p.id} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
-                <span style={{ fontWeight: 500 }}>{p.name}</span>
-                <span style={{ fontWeight: 700 }}>{r.qtyVentana} un. · ${fmt(r.revenueVentana)}</span>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3, gap: 8 }}>
+                <span style={{ fontWeight: 500 }}>
+                  {p.name}{p.stock <= 0 && <span style={{ marginLeft: 6, fontSize: 10.5, background: "#FDECEC", color: "#B3261E", borderRadius: 6, padding: "1px 6px", fontWeight: 700 }}>SIN STOCK</span>}
+                </span>
+                <span style={{ fontWeight: 700, textAlign: "right" }}>
+                  {r.qty} un. · ${fmt(r.ingresos)}{hayCostos && <span style={{ color: r.ganancia >= 0 ? "#1A7A44" : "#C0392B" }}> · gan. ${fmt(r.ganancia)}</span>}
+                </span>
               </div>
               <div style={{ height: 6, background: "#EDF2F8", borderRadius: 4 }}>
-                <div style={{ height: 6, width: `${(r.qtyVentana / maxAlta) * 100}%`, background: "#1B4F9C", borderRadius: 4 }} />
+                <div style={{ height: 6, width: `${Math.max(2, (r[claveOrden] / maxAlta) * 100)}%`, background: "#1B4F9C", borderRadius: 4 }} />
               </div>
             </div>
           ))
@@ -2673,15 +3097,18 @@ function PanelTab({ sales, categories, products }) {
               Tienen stock pero no se vendieron en los últimos {ventana} días. Ordenados por cuánto capital tenés inmovilizado en cada uno
               {sinMovimientoAll.length > sinMovimiento.length ? ` (se muestran los ${sinMovimiento.length} con más capital de ${sinMovimientoAll.length} en total)` : ""}.
             </div>
-            {sinMovimiento.map(({ p, r, capital }) => (
-              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5FA" }}>
+            {sinMovimiento.map(({ p, ultima, capital }) => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5FA", gap: 8 }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
                   <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>
-                    Stock: {p.stock} · {r.ultimaVenta ? `Última venta hace ${diasDesde(r.ultimaVenta)} días` : "Nunca se vendió"}
+                    Stock: {p.stock} · {ultima ? `Última venta hace ${diasDesde(ultima)} días` : "Nunca se vendió"}
                   </div>
                 </div>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: "#A85C06" }}>${fmt(capital)}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#A85C06" }}>${fmt(capital)}</div>
+                  {onEditProduct && <button onClick={() => onEditProduct(p)} style={btn("secundario", "sm")}><Pencil size={13} /></button>}
+                </div>
               </div>
             ))}
           </>
@@ -2699,26 +3126,74 @@ function PanelTab({ sales, categories, products }) {
   );
 }
 
-function MiniBarChart({ data, color, showEvery = 1 }) {
-  const max = Math.max(1, ...data.map((d) => d.value));
+// Gráfico de barras simple. Cada dato: { label, sub?, value, color?, full? }.
+// `avg` dibuja una línea punteada con el promedio; `showValues` escribe el
+// monto arriba de cada barra.
+function MiniBarChart({ data, color = "#1B4F9C", showEvery = 1, avg = null, height = 90, showValues = false }) {
+  const max = Math.max(1, ...data.map((d) => d.value), avg || 0);
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 90 }}>
+      <div style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 3, height }}>
         {data.map((d, i) => (
-          <div key={i} title={`${d.label}: $${fmt(d.value)}`} style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end" }}>
+          <div key={i} title={d.full || `${d.label}: $${fmt(d.value)}`} style={{ flex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "flex-end", alignItems: "center", minWidth: 0 }}>
+            {showValues && d.value > 0 && <div style={{ fontSize: 9, color: "#5B7791", marginBottom: 2, whiteSpace: "nowrap" }}>{abrev(d.value)}</div>}
             <div style={{
-              width: "100%", minHeight: d.value > 0 ? 3 : 0, height: `${(d.value / max) * 100}%`,
-              background: color, borderRadius: "3px 3px 0 0",
+              width: "100%", minHeight: d.value > 0 ? 3 : 0, height: `${(d.value / max) * (showValues ? 85 : 100)}%`,
+              background: d.color || color, borderRadius: "3px 3px 0 0",
             }} />
           </div>
         ))}
+        {avg > 0 && (
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: `${(avg / max) * (showValues ? 85 : 100)}%`, borderTop: "2px dashed #A85C06", pointerEvents: "none", opacity: 0.8 }} />
+        )}
       </div>
       <div style={{ display: "flex", gap: 3, marginTop: 6 }}>
         {data.map((d, i) => (
-          <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 9.5, color: "#8AA2BC" }}>
-            {i % showEvery === 0 ? d.label : ""}
+          <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 9.5, color: "#8AA2BC", lineHeight: 1.25, minWidth: 0 }}>
+            {d.sub && <div style={{ fontWeight: 700, color: d.color && d.color !== color ? d.color : "#5B7791" }}>{d.sub}</div>}
+            <div>{i % showEvery === 0 || data.length <= 12 ? d.label : ""}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// Compara dos meses: acumulado (línea que va sumando día a día) o día por día (barras dobles).
+function CompareChart({ a, b, modo, hoyDia }) {
+  const dias = Math.max(a.dias, b.dias);
+  const acum = (arr, limite) => { let t = 0; return Array.from({ length: dias }, (_, i) => (i < arr.length && i < limite ? (t += arr[i]) : null)); };
+  const limA = hoyDia ? hoyDia : a.dias;
+  const accA = acum(a.arr, limA);
+  const accB = acum(b.arr, b.dias);
+  const maxV = Math.max(1, ...accA.filter((v) => v !== null), ...accB.filter((v) => v !== null), ...(modo === "diario" ? a.arr.concat(b.arr) : []));
+  const W = 100, H = 56;
+  const x = (i) => (dias <= 1 ? 0 : (i / (dias - 1)) * W);
+  const y = (v) => H - (v / maxV) * H;
+  const poly = (serie) => serie.map((v, i) => (v === null ? null : `${x(i)},${y(v)}`)).filter(Boolean).join(" ");
+  return (
+    <div>
+      {modo === "acumulado" ? (
+        <svg viewBox={`0 0 ${W} ${H + 2}`} preserveAspectRatio="none" style={{ width: "100%", height: 130, overflow: "visible" }}>
+          <polyline points={poly(accB)} fill="none" stroke="#9FB3C8" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+          <polyline points={poly(accA)} fill="none" stroke="#1B4F9C" strokeWidth="2.2" vectorEffect="non-scaling-stroke" />
+        </svg>
+      ) : (
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 1.5, height: 110 }}>
+          {Array.from({ length: dias }, (_, i) => (
+            <div key={i} title={`Día ${i + 1}: ${a.nombre} $${fmt(a.arr[i] || 0)} · ${b.nombre} $${fmt(b.arr[i] || 0)}`} style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end", gap: 1 }}>
+              <div style={{ flex: 1, height: `${((a.arr[i] || 0) / maxV) * 100}%`, minHeight: a.arr[i] > 0 ? 2 : 0, background: "#1B4F9C", borderRadius: "2px 2px 0 0" }} />
+              <div style={{ flex: 1, height: `${((b.arr[i] || 0) / maxV) * 100}%`, minHeight: b.arr[i] > 0 ? 2 : 0, background: "#9FB3C8", borderRadius: "2px 2px 0 0" }} />
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9.5, color: "#8AA2BC", marginTop: 4 }}>
+        <span>día 1</span><span>día {Math.ceil(dias / 2)}</span><span>día {dias}</span>
+      </div>
+      <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: "#5B7791", marginTop: 6, flexWrap: "wrap" }}>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#1B4F9C", borderRadius: 2, marginRight: 4 }} />{a.nombre}</span>
+        <span><span style={{ display: "inline-block", width: 10, height: 10, background: "#9FB3C8", borderRadius: 2, marginRight: 4 }} />{b.nombre}</span>
       </div>
     </div>
   );
@@ -2735,7 +3210,7 @@ function CargarStockTab({ products, compras, onCargar }) {
 
   const norm = (s) => (s || "").toLowerCase();
   const resultados = search.trim()
-    ? products.filter((p) => norm(p.name).includes(norm(search)) || codigosDe(p).some((c) => c.includes(search.trim()))).slice(0, 8)
+    ? buscar(products, search, (p) => p.name + " " + codigosDe(p).join(" "), { ordenar: true }).slice(0, 8)
     : [];
 
   const elegirProducto = (p) => {
@@ -2994,7 +3469,7 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
 
   const norm = (s) => (s || "").toLowerCase();
   const resultadosStock = source === "stock" && search.trim()
-    ? products.filter((p) => norm(p.name).includes(norm(search)) || codigosDe(p).some((c) => c.includes(search.trim()))).slice(0, 8)
+    ? buscar(products, search, (p) => p.name + " " + codigosDe(p).join(" "), { ordenar: true }).slice(0, 8)
     : [];
 
   const limpiarLinea = () => {
@@ -3642,7 +4117,7 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
     setCatOpen(false);
   };
   const categoriasOrdenadas = categories.slice().sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
-  const categoriasFiltradas = categoriasOrdenadas.filter((c) => c.name.toLowerCase().includes(catSearch.trim().toLowerCase()));
+  const categoriasFiltradas = categoriasOrdenadas.filter((c) => coincide(catSearch, c.name));
   const coincidenciaExacta = categoriasOrdenadas.some((c) => c.name.toLowerCase() === catSearch.trim().toLowerCase());
 
   return (
@@ -4119,7 +4594,7 @@ function SheetLabelModal({ products, onClose }) {
   const [qty, setQty] = useState({});
 
   const filtered = products
-    .filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .filter((p) => coincide(search, p.name))
     .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
 
   const setQtyFor = (id, val) => {
