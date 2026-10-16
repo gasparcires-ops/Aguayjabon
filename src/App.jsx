@@ -10,6 +10,7 @@ import {
 import { getData, setData, deleteData, uploadProductImage } from "./lib/storage";
 import { agregarLoteStock, sincronizarLotesConStock, consumirFIFO, restaurarLote, lotesEfectivos } from "./lib/lotes";
 import { coincide, buscar } from "./lib/buscar";
+import { generarReporte } from "./lib/reporte";
 import * as XLSX from "xlsx";
 import JsBarcode from "jsbarcode";
 import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
@@ -1076,6 +1077,20 @@ export default function PuntoDeVenta() {
     URL.revokeObjectURL(url);
   };
 
+  // Reporte compacto (texto) para pasárselo a Claude y que interprete el negocio.
+  const descargarReporte = () => {
+    const texto = generarReporte({ sales, products, categories, compras, cajaHistorial, metodos: methodLabel });
+    const blob = new Blob([texto], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reporte-negocio-${new Date().toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const methodLabel = { efectivo: "Efectivo", transferencia: "Transferencia", debito: "Débito", credito: "Crédito", mercadopago: "Mercado Pago", otros: "Otros" };
   const methodIcon = { efectivo: Wallet, transferencia: ArrowLeftRight, debito: CreditCard, credito: CreditCard, mercadopago: Smartphone, otros: MoreHorizontal };
 
@@ -1295,7 +1310,7 @@ export default function PuntoDeVenta() {
           <ResumenTab sales={sales} categories={categories} employees={employees} range={range} setRange={setRange} products={products} methodLabel={methodLabel} />
         )}
         {tab === "panel" && (
-          <PanelTab sales={sales} categories={categories} products={products} methodLabel={methodLabel} onEditProduct={(p) => { setTab("articulos"); openEditProduct(p); }} />
+          <PanelTab sales={sales} categories={categories} products={products} methodLabel={methodLabel} onDescargarReporte={descargarReporte} onEditProduct={(p) => { setTab("articulos"); openEditProduct(p); }} />
         )}
         {tab === "cargarStock" && (
           <CargarStockTab products={products} compras={compras} onCargar={cargarStockConCosto} />
@@ -2620,7 +2635,7 @@ const nombreMes = (y, m) => {
 const abrev = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace(".0", "") + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n)));
 const variacion = (a, b) => (b > 0 ? ((a - b) / b) * 100 : null);
 
-function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
+function PanelTab({ sales, categories, products, onEditProduct, methodLabel, onDescargarReporte }) {
   const hoy = new Date();
   const [ventana, setVentana] = useState(30); // días para calcular rotación
   const [origenF, setOrigenF] = useState("todos");
@@ -2900,6 +2915,17 @@ function PanelTab({ sales, categories, products, onEditProduct, methodLabel }) {
 
   return (
     <div>
+      {onDescargarReporte && (
+        <div style={{ background: "#F6F9FE", border: "1px solid #DBE6F2", borderRadius: 12, padding: 12, marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 240px" }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: "#10243D" }}>Reporte para analizar con Claude</div>
+            <div style={{ fontSize: 12, color: "#5B7791", marginTop: 2 }}>
+              Descarga un archivo liviano con el resumen de tu negocio (ventas, productos, stock, alertas). Subilo a un chat de Claude y te dice qué está pasando y cómo vender más.
+            </div>
+          </div>
+          <button onClick={onDescargarReporte} style={btn("primario")}><Download size={15} /> Descargar reporte</button>
+        </div>
+      )}
       <AlertasProductos products={products} categories={categories} onEdit={onEditProduct} titulo="ALERTAS DE PRODUCTOS (tocá una para ver cuáles son)" />
 
       {/* ---- filtros globales ---- */}
