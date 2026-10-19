@@ -39,12 +39,29 @@ export function lotesEfectivos(product) {
 export function agregarLoteStock(product, qty, costoUnitario) {
   if (!qty || qty <= 0) return product;
   const lotes = [...lotesEfectivos(product), nuevoLote(qty, costoUnitario)];
-  return {
+  // OJO: `cost` (el costo "vigente" que se muestra y se usa para el margen)
+  // NO cambia acá: sigue siendo el del lote más viejo hasta que se agote. Lo
+  // que sí se guarda es `ultimoCosto`, el de esta compra más reciente, que es
+  // el que se propone en la próxima carga.
+  return conCostoVigente({
     ...product,
     stock: (product.stock || 0) + qty,
     lotes,
-    cost: costoUnitario > 0 ? costoUnitario : product.cost,
-  };
+    ultimoCosto: costoUnitario > 0 ? costoUnitario : product.ultimoCosto,
+  });
+}
+
+// Costo "vigente" de un producto = el del lote más viejo que todavía tiene
+// unidades (el que se está vendiendo ahora). Cuando ese lote se agota, pasa
+// solo al costo del siguiente. Los productos sin lotes quedan como están.
+export function conCostoVigente(product) {
+  if (!product || !product.lotes || product.lotes.length === 0) return product;
+  const vivos = product.lotes.filter((l) => l.qty > 0);
+  if (vivos.length === 0) return product;
+  const vigente = vivos[0].costoUnitario > 0 ? vivos[0].costoUnitario : product.cost;
+  const ultimo = product.ultimoCosto != null ? product.ultimoCosto : (vivos[vivos.length - 1].costoUnitario || undefined);
+  if (vigente === product.cost && ultimo === product.ultimoCosto) return product;
+  return { ...product, cost: vigente, ultimoCosto: ultimo };
 }
 
 // Reconcilia los lotes cuando el stock se edita a mano (formulario de
@@ -69,6 +86,11 @@ export function sincronizarLotesConStock(product, nuevoStock, costoNuevo) {
       if (quedan > 0) recortados.push({ ...lote, qty: quedan });
     }
     lotes = recortados.reverse();
+  } else if (costoNuevo > 0 && lotes.length > 0 && lotes[0].costoUnitario !== costoNuevo) {
+    // Sin cambio de stock pero con otro costo en el formulario: es una
+    // corrección del costo actual (el del lote que se está vendiendo). Las
+    // ventas ya hechas no se tocan, tienen su costo grabado.
+    lotes = [{ ...lotes[0], costoUnitario: costoNuevo }, ...lotes.slice(1)];
   }
   return lotes;
 }
@@ -103,5 +125,5 @@ export function consumirFIFO(product, qty) {
 export function restaurarLote(product, qty, costoUnitario, fecha) {
   if (!qty || qty <= 0) return product;
   const lotes = [{ id: uidLote(), qty, costoUnitario: costoUnitario || 0, fecha: fecha || null }, ...lotesEfectivos(product)];
-  return { ...product, stock: (product.stock || 0) + qty, lotes };
+  return conCostoVigente({ ...product, stock: (product.stock || 0) + qty, lotes });
 }

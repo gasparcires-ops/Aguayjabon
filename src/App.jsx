@@ -8,7 +8,7 @@ import {
   DollarSign, CircleAlert, Check, ClipboardList, Image as ImageIcon, Truck,
 } from "lucide-react";
 import { getData, setData, deleteData, uploadProductImage } from "./lib/storage";
-import { agregarLoteStock, sincronizarLotesConStock, consumirFIFO, restaurarLote, lotesEfectivos } from "./lib/lotes";
+import { agregarLoteStock, sincronizarLotesConStock, consumirFIFO, restaurarLote, lotesEfectivos, conCostoVigente } from "./lib/lotes";
 import { coincide, buscar } from "./lib/buscar";
 import { generarReporte } from "./lib/reporte";
 import * as XLSX from "xlsx";
@@ -107,7 +107,7 @@ export default function PuntoDeVenta() {
         return fallback;
       }
     };
-    setProducts(await load("products", []));
+    setProducts((await load("products", [])).map(conCostoVigente));
     setCategories(await load("categories", []));
     setGroups(await load("groups", []));
     setEmployees(await load("employees", []));
@@ -197,7 +197,7 @@ export default function PuntoDeVenta() {
       setSaveError(`No se pudo guardar (${e && e.message ? e.message : "error de red"}). Probá de nuevo.`);
     }
   };
-  const saveProducts = (n) => { setProducts(n); persist("products", n); };
+  const saveProducts = (n) => { const v = n.map(conCostoVigente); setProducts(v); persist("products", v); };
   const saveCategories = (n) => { setCategories(n); persist("categories", n); };
   const saveGroups = (n) => { setGroups(n); persist("groups", n); };
   const saveEmployees = (n) => { setEmployees(n); persist("employees", n); };
@@ -649,7 +649,7 @@ export default function PuntoDeVenta() {
     await withFreshProducts((fresh) => {
       if (!formData.id) {
         // Producto nuevo: si arranca con stock, ese es su primer lote.
-        return [...fresh, { id: uid(), ...data, lotes: stock > 0 ? [{ id: uid(), qty: stock, costoUnitario: cost || 0, fecha: new Date().toISOString() }] : [] }];
+        return [...fresh, { id: uid(), ...data, lotes: stock > 0 ? [{ id: uid(), qty: stock, costoUnitario: cost || 0, fecha: new Date().toISOString() }] : [], ultimoCosto: cost > 0 ? cost : undefined }];
       }
       return fresh.map((p) => {
         if (p.id !== formData.id) return p;
@@ -657,7 +657,8 @@ export default function PuntoDeVenta() {
         // lotes: si subió, es una carga nueva al costo indicado; si bajó, es
         // una corrección y se descuenta de lo más nuevo primero.
         const lotes = sincronizarLotesConStock(p, stock, cost);
-        return { ...p, ...data, lotes };
+        const ultimoCosto = stock > (p.stock || 0) || lotes.length === 0 ? (cost > 0 ? cost : p.ultimoCosto) : p.ultimoCosto;
+        return { ...p, ...data, lotes, ultimoCosto };
       });
     });
     if (keepOpen) {
@@ -674,7 +675,7 @@ export default function PuntoDeVenta() {
     if (!amount || amount <= 0) return;
     // Restock rápido: se asume el mismo costo que ya tenía cargado el producto.
     // Para cargar stock a un costo distinto, usar el panel "Cargar stock".
-    await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? agregarLoteStock(p, amount, p.cost) : p)));
+    await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? agregarLoteStock(p, amount, p.ultimoCosto || p.cost) : p)));
   };
   // Carga de stock con costo propio (panel dedicado "Cargar stock"). Además
   // de sumar al producto, registra el movimiento en un historial de compras.
@@ -3284,7 +3285,7 @@ function CargarStockTab({ products, compras, onCargar }) {
     setSeleccionado(p);
     setSearch("");
     setQty("");
-    setCosto(p.cost ? String(p.cost) : "");
+    setCosto(p.ultimoCosto || p.cost ? String(p.ultimoCosto || p.cost) : "");
   };
 
   const registrar = () => {
@@ -3292,7 +3293,9 @@ function CargarStockTab({ products, compras, onCargar }) {
     const costoNum = parseFloat(costo);
     if (!seleccionado || !qtyNum || qtyNum <= 0 || isNaN(costoNum) || costoNum < 0) return;
     onCargar(seleccionado.id, qtyNum, costoNum);
-    setOkMsg(`Se cargaron ${qtyNum} un. de "${seleccionado.name}" a $${fmt(costoNum)} c/u.`);
+    const enCola = lotesEfectivos(seleccionado).filter((l) => l.qty > 0);
+    const hayAnteriores = enCola.length > 0 && enCola[0].costoUnitario !== costoNum;
+    setOkMsg(`Se cargaron ${qtyNum} un. de "${seleccionado.name}" a $${fmt(costoNum)} c/u.` + (hayAnteriores ? ` Primero se venden las ${enCola.reduce((a, l) => a + l.qty, 0)} que ya tenías (desde $${fmt(enCola[0].costoUnitario)}); el costo del producto cambia solo cuando se agoten.` : ""));
     setTimeout(() => setOkMsg(""), 3500);
     setSeleccionado(null);
     setQty("");
@@ -4352,6 +4355,12 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
         </div>
       )}
       <Field label="Stock"><input type="number" min="0" step="1" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="0" style={inputStyle} /></Field>
+      {form.id && (form.lotes || []).filter((l) => l.qty > 0).length > 1 && (
+        <div style={{ fontSize: 12, color: "#5B7791", background: "#F6F9FE", borderRadius: 10, padding: "8px 12px", marginBottom: 10 }}>
+          <b>Cola de costos</b> (se vende de izquierda a derecha): {(form.lotes || []).filter((l) => l.qty > 0).map((l) => `${l.qty} un. a $${fmt(l.costoUnitario)}`).join(" → ")}.
+          El costo que ves arriba es el del primer grupo; cuando se agote pasa solo al siguiente.
+        </div>
+      )}
 
       <Field label="Modificadores (opcionales — ej: tamaño, sabor)">
         {(form.modifiers || []).map((m, idx) => (

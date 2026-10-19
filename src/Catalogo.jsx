@@ -4,7 +4,7 @@ import {
   Plus, Minus, X, Check, Image as ImageIcon,
 } from "lucide-react";
 import { getData, setData } from "./lib/storage";
-import { consumirFIFO } from "./lib/lotes";
+import { consumirFIFO, conCostoVigente } from "./lib/lotes";
 import { C } from "./ui";
 import ProductCard, { precioEfectivo } from "./components/ProductCard";
 
@@ -255,7 +255,7 @@ export default function Catalogo() {
         if (cantidadVendida <= 0) return p;
         const { lotes, costoUnitarioPromedio } = consumirFIFO(p, cantidadVendida);
         costoPorProducto[p.id] = costoUnitarioPromedio;
-        return { ...p, stock: Math.max(0, p.stock - cantidadVendida), lotes };
+        return conCostoVigente({ ...p, stock: Math.max(0, p.stock - cantidadVendida), lotes });
       });
 
       const sale = {
