@@ -739,8 +739,8 @@ export default function PuntoDeVenta() {
   // cada una pudiendo venir de un lugar distinto (artículo mayorista propio o
   // stock real de la tienda) — así una sola venta puede llevar varios
   // artículos mezclados, como cualquier venta normal.
-  const venderMayorista = async ({ cart, method, cliente }) => {
-    if (!Array.isArray(cart) || cart.length === 0 || !method) return;
+  const venderMayorista = async ({ cart, method, cliente, pending = false }) => {
+    if (!Array.isArray(cart) || cart.length === 0 || (!method && !pending)) return;
     let freshSales = sales;
     let freshProducts = products;
     let freshMayoristas = productosMayoristas;
@@ -803,8 +803,10 @@ export default function PuntoDeVenta() {
       discountType: null, discountValue: 0, discountAmount: 0,
       surchargeRate: 0, surchargeAmount: 0,
       total,
-      method,
-      pending: false,
+      // Pendiente de pago: el stock ya salió, pero no suma en lo vendido ni en
+      // la caja hasta que se marque como cobrado (con la forma de pago real).
+      method: pending ? null : method,
+      pending: !!pending,
     };
     saveSales([sale, ...freshSales]);
     return sale;
@@ -1125,7 +1127,7 @@ export default function PuntoDeVenta() {
   }
 
   const soldToday = sales
-    .filter((s) => new Date(s.date).toDateString() === new Date().toDateString())
+    .filter((s) => new Date(s.date).toDateString() === new Date().toDateString() && !s.pending)
     .reduce((a, s) => a + s.total, 0);
   const pendingProductsCount = products.filter((p) => !p.price || p.price === 0 || !p.cost || p.cost === 0).length;
   const pedidosWebSinConfirmar = sales.filter((s) => s.origen === "catalogo" && !s.confirmado).length;
@@ -1324,7 +1326,7 @@ export default function PuntoDeVenta() {
           <MayoristasTab
             productosMayoristas={productosMayoristas} products={products} sales={sales} methodLabel={methodLabel} methodIcon={methodIcon}
             onGuardarProducto={guardarProductoMayorista} onEliminarProducto={eliminarProductoMayorista}
-            onVender={venderMayorista} onDeleteVenta={deleteSale}
+            onVender={venderMayorista} onDeleteVenta={deleteSale} onMarcarPagado={marcarComoPagado}
           />
         )}
         {tab === "catalogoAdmin" && (
@@ -2654,7 +2656,7 @@ function PanelTab({ sales, categories, products, onEditProduct, methodLabel, onD
   // Ventas "reales": todo lo que ya salió de stock y no corre riesgo de cancelarse
   // (los pedidos del catálogo todavía sin confirmar por el negocio se excluyen).
   const ventasValidas = useMemo(
-    () => sales.filter((s) => !(s.origen === "catalogo" && !s.confirmado)),
+    () => sales.filter((s) => !(s.origen === "catalogo" && !s.confirmado) && !s.pending),
     [sales]
   );
 
@@ -3396,12 +3398,15 @@ function CargarStockTab({ products, compras, onCargar }) {
 // junto con el resto (misma lista de "sales"), así que suman en "Cómo
 // vamos" y en el Panel de control como cualquier otra venta.
 
-function MayoristasTab({ productosMayoristas, products, sales, methodLabel, methodIcon, onGuardarProducto, onEliminarProducto, onVender, onDeleteVenta }) {
+function MayoristasTab({ productosMayoristas, products, sales, methodLabel, methodIcon, onGuardarProducto, onEliminarProducto, onVender, onDeleteVenta, onMarcarPagado }) {
   const [vista, setVista] = useState("vender"); // "vender" | "articulos"
   const [form, setForm] = useState(null); // artículo en edición/alta
 
   const ventasMayoristas = sales.filter((s) => s.origen === "mayorista");
-  const totalVendidoHistorico = ventasMayoristas.reduce((a, s) => a + s.total, 0);
+  const totalVendidoHistorico = ventasMayoristas.filter((s) => !s.pending).reduce((a, s) => a + s.total, 0);
+  const totalPendiente = ventasMayoristas.filter((s) => s.pending).reduce((a, s) => a + s.total, 0);
+  const [payingId, setPayingId] = useState(null);
+  const [payChoice, setPayChoice] = useState("efectivo");
 
   return (
     <div>
@@ -3433,27 +3438,42 @@ function MayoristasTab({ productosMayoristas, products, sales, methodLabel, meth
           />
 
           <div style={{ marginTop: 20 }}>
-            <Section title={`Ventas a mayoristas${ventasMayoristas.length > 0 ? ` · $${fmt(totalVendidoHistorico)} en total` : ""}`}>
+            <Section title={`Ventas a mayoristas${ventasMayoristas.length > 0 ? ` · $${fmt(totalVendidoHistorico)} cobrado` : ""}${totalPendiente > 0 ? ` · $${fmt(totalPendiente)} por cobrar` : ""}`}>
               {ventasMayoristas.length === 0 ? (
                 <EmptyState text="Todavía no registraste ventas a mayoristas." />
               ) : (
                 ventasMayoristas.slice(0, 30).map((s) => (
-                  <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5FA" }}>
+                  <div key={s.id} style={{ padding: "8px 0", borderBottom: "1px solid #F1F5FA", background: s.pending ? "#FFFBF2" : "transparent" }}>
+                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>
                         {s.items.map((i) => `${i.qty}x ${i.name}`).join(", ")}
                         {s.cliente ? ` · ${s.cliente}` : ""}
                       </div>
                       <div style={{ fontSize: 11.5, color: "#8AA2BC" }}>
-                        {new Date(s.date).toLocaleString("es-AR")} · {methodLabel[s.method] || s.method}
+                        {new Date(s.date).toLocaleString("es-AR")} · {s.pending ? <b style={{ color: "#A85C06" }}>PENDIENTE DE PAGO</b> : (methodLabel[s.method] || s.method)}
                       </div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 700 }}>${fmt(s.total)}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, color: s.pending ? "#A85C06" : "inherit" }}>${fmt(s.total)}</div>
                       <IconBtn danger onClick={() => { if (confirm("¿Eliminar esta venta a mayorista? Esto devuelve el stock del artículo.")) onDeleteVenta(s.id); }}>
                         <Trash2 size={13} />
                       </IconBtn>
                     </div>
+                   </div>
+                   {s.pending && (payingId === s.id ? (
+                     <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                       <select value={payChoice} onChange={(e) => setPayChoice(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 120 }}>
+                         {Object.keys(methodLabel).map((m) => <option key={m} value={m}>{methodLabel[m]}</option>)}
+                       </select>
+                       <button onClick={() => { onMarcarPagado(s.id, payChoice); setPayingId(null); }} style={btn("primario", "sm")}>Confirmar cobro</button>
+                       <button onClick={() => setPayingId(null)} style={btn("terciario", "sm")}>Cancelar</button>
+                     </div>
+                   ) : (
+                     <button onClick={() => { setPayingId(s.id); setPayChoice("efectivo"); }} style={{ ...btn("secundario", "sm"), marginTop: 8 }}>
+                       <Check size={13} /> Marcar como cobrado
+                     </button>
+                   ))}
                   </div>
                 ))
               )}
@@ -3604,11 +3624,14 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
   const totalCarrito = cart.reduce((a, l) => a + l.price * l.qty, 0);
   const gananciaCarrito = cart.reduce((a, l) => a + (l.price - (l.cost || 0)) * l.qty, 0);
 
-  const confirmar = async () => {
-    if (cart.length === 0 || !method) return;
+  const confirmar = async (pendiente = false) => {
+    if (cart.length === 0 || (!pendiente && !method)) return;
+    if (pendiente && !cliente.trim()) return;
     const resumen = cart.map((l) => `${l.qty}x ${l.name}`).join(", ");
-    await onVender({ cart: cart.map((l) => ({ source: l.source, productId: l.productId, qty: l.qty, price: l.price, cost: l.cost })), method, cliente });
-    setOkMsg(`Venta registrada: ${resumen} · $${fmt(totalCarrito)}`);
+    await onVender({ cart: cart.map((l) => ({ source: l.source, productId: l.productId, qty: l.qty, price: l.price, cost: l.cost })), method, cliente, pending: pendiente });
+    setOkMsg(pendiente
+      ? `Pedido de ${cliente.trim()} guardado como PENDIENTE DE PAGO: ${resumen} · $${fmt(totalCarrito)}`
+      : `Venta registrada: ${resumen} · $${fmt(totalCarrito)}`);
     setTimeout(() => setOkMsg(""), 4000);
     setCart([]); setMethod(null); setCliente(""); limpiarLinea();
   };
@@ -3753,9 +3776,16 @@ function VentaMayoristaPanel({ productosMayoristas, products, methodLabel, metho
             })}
           </div>
 
-          <button onClick={confirmar} disabled={!method} style={{ ...btn("primario", "lg"), width: "100%", opacity: method ? 1 : 0.5 }}>
-            {!method ? "Elegí una forma de pago" : `Registrar venta · $${fmt(totalCarrito)}`}
+          <button onClick={() => confirmar(false)} disabled={!method} style={{ ...btn("primario", "lg"), width: "100%", opacity: method ? 1 : 0.5 }}>
+            {!method ? "Elegí una forma de pago" : `Registrar venta cobrada · $${fmt(totalCarrito)}`}
           </button>
+          <div style={{ textAlign: "center", fontSize: 12, color: "#8AA2BC", margin: "8px 0" }}>— o, si todavía no paga —</div>
+          <button onClick={() => confirmar(true)} disabled={!cliente.trim()} style={{ ...btn("secundario", "lg"), width: "100%", opacity: cliente.trim() ? 1 : 0.5 }}>
+            <Banknote size={16} /> {cliente.trim() ? "Dejar pendiente de pago" : "Poné el nombre del cliente para dejarlo pendiente"}
+          </button>
+          <div style={{ fontSize: 11.5, color: "#8AA2BC", marginTop: 6 }}>
+            Pendiente: el stock se descuenta ya, pero no suma a lo vendido ni a la caja hasta que lo marques como cobrado.
+          </div>
         </div>
       )}
 
@@ -3843,7 +3873,7 @@ function HistorialTab({ sales, onView, onDelete, methodLabel, onMarcarPagado, on
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <button onClick={() => onView(s)} style={{ flex: 1, textAlign: "left", background: "none", border: "none", padding: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div>
-                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Pedido #{s.number}{s.cliente ? ` · ${s.cliente}` : ""}</div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Pedido #{s.number}{s.origen === "mayorista" ? " (mayorista)" : ""}{s.cliente ? ` · ${s.cliente}` : ""}</div>
                       <div style={{ fontSize: 12, color: "#8AA2BC" }}>{new Date(s.date).toLocaleString("es-AR")}{s.employeeName ? ` · ${s.employeeName}` : ""}</div>
                     </div>
                     <div style={{ fontSize: 15, fontWeight: 700, color: "#A85C06", marginRight: 8 }}>${fmt(s.total)}</div>
