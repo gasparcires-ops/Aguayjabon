@@ -11,6 +11,7 @@ import { getData, setData, deleteData, uploadProductImage } from "./lib/storage"
 import { agregarLoteStock, sincronizarLotesConStock, consumirFIFO, restaurarLote, lotesEfectivos, conCostoVigente } from "./lib/lotes";
 import { coincide, buscar } from "./lib/buscar";
 import { generarReporte } from "./lib/reporte";
+import { descargarEtiquetasPDF } from "./lib/etiquetas";
 import * as XLSX from "xlsx";
 import JsBarcode from "jsbarcode";
 import { C, F, btn, iconBtn, card, chip as chipStyle, input as inputBase, badgeStock } from "./ui";
@@ -24,6 +25,15 @@ const mono = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospac
 const fmt = (n) =>
   Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+// Devuelve un texto si el precio nuevo parece un error de tipeo (bajo el costo o cambio muy brusco), o null.
+const avisoPrecio = (p, nuevo) => {
+  const nv = Number(nuevo);
+  if (!(nv >= 0)) return null;
+  if (p && p.cost > 0 && nv < p.cost) return `el precio $${nv.toLocaleString("es-AR")} queda por DEBAJO del costo ($${Number(p.cost).toLocaleString("es-AR")})`;
+  const viejo = p ? Number(p.price) || 0 : 0;
+  if (viejo > 0 && nv > 0 && (nv < viejo / 3 || nv > viejo * 3)) return `el precio pasa de $${viejo.toLocaleString("es-AR")} a $${nv.toLocaleString("es-AR")} (cambio muy brusco, ¿falta o sobra un cero?)`;
+  return null;
+};
 const precioVenta = (p) => (p && p.enOferta && p.precioOferta > 0 ? p.precioOferta : p ? p.price : 0);
 // Costo real de lo que queda en stock, sumando cada lote al costo que tenía
 // cuando entró (en vez de multiplicar todo el stock por el costo actual).
@@ -67,6 +77,7 @@ export default function PuntoDeVenta() {
   const [loginError, setLoginError] = useState("");
 
   const [tab, setTab] = useState("inicio");
+  const [alertasSistema, setAlertasSistema] = useState([]); // avisos de cosas raras (ventas bajo costo, precios sospechosos)
   const [cart, setCart] = useState([]); // {lineId, productId, name, price, modifiers:[{name,price}], qty}
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("all");
@@ -127,6 +138,7 @@ export default function PuntoDeVenta() {
     setProductosMayoristas(await load("productos_mayoristas", []));
     setPresupuestoNextNum(await load("presupuesto_next_num", 1));
     setPresupuestos(await load("presupuestos", []));
+    setAlertasSistema(await load("alertas_sistema", []));
   };
 
   useEffect(() => {
@@ -206,6 +218,21 @@ export default function PuntoDeVenta() {
   const saveObservaciones = (n) => { setObservaciones(n); persist("observaciones", n); };
   const saveCompras = (n) => { setCompras(n); persist("compras", n); };
   const saveProductosMayoristas = (n) => { setProductosMayoristas(n); persist("productos_mayoristas", n); };
+
+  // Registro de cosas raras (se guarda en la base; se ve en Inicio hasta que lo marcás como visto).
+  const logAlertas = async (nuevos) => {
+    if (!nuevos || nuevos.length === 0) return;
+    let actuales = alertasSistema;
+    try { const f = await getData("alertas_sistema"); if (f) actuales = f; } catch (e) {}
+    const quien = activeEmployee ? activeEmployee.name : account;
+    const items = nuevos.map((a) => ({ id: uid(), fecha: new Date().toISOString(), visto: false, quien, ...a }));
+    const next = [...items, ...actuales].slice(0, 300);
+    setAlertasSistema(next); persist("alertas_sistema", next);
+  };
+  const marcarAlertasVistas = () => {
+    const next = alertasSistema.map((a) => ({ ...a, visto: true }));
+    setAlertasSistema(next); persist("alertas_sistema", next);
+  };
 
   // Trae los productos más recientes de la base justo antes de escribir, para
   // no pisar cambios hechos desde otra pestaña/dispositivo mientras esta
@@ -509,6 +536,11 @@ export default function PuntoDeVenta() {
   const cobrar = async (pending = false) => {
     if (cart.length === 0) return;
     if (!pending && !payMethod) return; // no dejar cobrar sin elegir forma de pago a propósito
+    const bajoCostoCart = cart.filter((l) => { const pr = products.find((p) => p.id === l.productId); return pr && pr.cost > 0 && l.price < pr.cost; });
+    if (bajoCostoCart.length > 0) {
+      const txt = bajoCostoCart.map((l) => { const pr = products.find((p) => p.id === l.productId); return `• ${l.name}: se vende a $${fmt(l.price)} y cuesta $${fmt(pr.cost)}`; }).join("\n");
+      if (!window.confirm(`⚠️ Estás vendiendo por DEBAJO DEL COSTO:\n\n${txt}\n\n¿Cobrar igual?`)) return;
+    }
     // Trae los datos más recientes justo antes de guardar, para no pisar
     // ventas o productos cargados desde otro momento mientras esta pestaña
     // estaba abierta sin refrescar.
@@ -563,6 +595,13 @@ export default function PuntoDeVenta() {
     const nextSales = [sale, ...freshSales];
     saveSales(nextSales);
     saveProducts(nextProducts);
+    const perdidas = sale.items.filter((i) => i.cost > 0 && i.price < i.cost);
+    if (perdidas.length > 0) {
+      logAlertas(perdidas.map((i) => ({
+        tipo: "ventaBajoCosto",
+        texto: `Venta #${sale.number}: ${i.name} x${i.qty} a $${fmt(i.price)} (costo $${fmt(i.cost)}) · pérdida $${fmt((i.cost - i.price) * i.qty)}`,
+      })));
+    }
     setCart([]);
     setDiscount({ type: "pct", value: 0 });
     setShowDiscount(false);
@@ -639,6 +678,11 @@ export default function PuntoDeVenta() {
       barcodesExtra.push({ code, modifier: extraMod(e) });
     });
     const precioOferta = parseFloat(formData.precioOferta);
+    {
+      const previo = formData.id ? products.find((p) => p.id === formData.id) : null;
+      const av = avisoPrecio({ cost, price: previo ? previo.price : 0, name }, price);
+      if (av) logAlertas([{ tipo: "precioRaro", texto: `${name}: ${av}` }]);
+    }
     const data = {
       name, price, stock, categoryId: formData.categoryId || "", modifiers: formData.modifiers || [], barcode, barcodeMod: formData.barcodeMod || "", barcodesExtra,
       cost, costoLista: costoListaFinal, descuentoPct: descuentoPctFinal, imageUrl: formData.imageUrl || "",
@@ -814,7 +858,16 @@ export default function PuntoDeVenta() {
 
   const editarPrecioRapido = async (product, price) => {
     if (isNaN(price) || price < 0) return;
+    const av = avisoPrecio(product, price);
+    if (av) logAlertas([{ tipo: "precioRaro", texto: `${product.name}: ${av}` }]);
     await withFreshProducts((fresh) => fresh.map((p) => (p.id === product.id ? { ...p, price } : p)));
+  };
+
+  const aplicarPrecios = async (cambios) => {
+    const mapa = new Map(cambios.map((c) => [c.id, c.price]));
+    const raros = cambios.filter((c) => { const pr = products.find((x) => x.id === c.id); return pr && pr.cost > 0 && c.price < pr.cost; });
+    if (raros.length) logAlertas(raros.map((c) => ({ tipo: "precioRaro", texto: `${c.name}: precio $${fmt(c.price)} por debajo del costo (cambio masivo)` })));
+    await withFreshProducts((fresh) => fresh.map((p) => (mapa.has(p.id) ? { ...p, price: mapa.get(p.id) } : p)));
   };
 
   const generarCodigosFaltantes = () => {
@@ -1201,6 +1254,7 @@ export default function PuntoDeVenta() {
               { id: "caja", label: "Caja del día", icon: Banknote },
               { id: "resumen", label: "Cómo vamos", icon: BarChart3 },
               { id: "panel", label: "Panel de control", icon: TrendingUp },
+              { id: "precios", label: "Precios", icon: Tag },
               { id: "presupuestos", label: "Presupuestos", icon: ClipboardList },
             ].map((t) => {
               const Icon = t.icon;
@@ -1275,13 +1329,14 @@ export default function PuntoDeVenta() {
                 products={products} categories={categories}
                 onEditProduct={(p) => { setTab("articulos"); openEditProduct(p); }}
                 pedidosWebCount={pedidosWebSinConfirmar}
+                avisos={alertasSistema} onAvisosVistos={marcarAlertasVistas}
                 setTab={setTab}
                 onCargarProducto={() => { setTab("articulos"); openNewProduct(); }}
               />
             )}
             {tab === "vender" && (
               <VenderTab
-                products={filteredProducts} categories={categories} search={search} setSearch={setSearch}
+                allProducts={products} products={filteredProducts} categories={categories} search={search} setSearch={setSearch}
                 catFilter={catFilter} setCatFilter={setCatFilter} cart={cart} cartTotals={cartTotals}
                 onProductTap={handleProductTap} changeQty={changeQty} removeLine={removeLine}
                 payMethod={payMethod} setPayMethod={setPayMethod} methodLabel={methodLabel} methodIcon={methodIcon}
@@ -1318,6 +1373,7 @@ export default function PuntoDeVenta() {
         {tab === "cargarStock" && (
           <CargarStockTab products={products} compras={compras} onCargar={cargarStockConCosto} />
         )}
+        {tab === "precios" && <PreciosTab products={products} categories={categories} onAplicar={aplicarPrecios} />}
         {tab === "presupuestos" && (
           <PresupuestosTab products={products} presupuestos={presupuestos} onGenerar={generarPresupuesto} onVer={setPresupuestoGenerado} onEliminar={eliminarPresupuesto} />
         )}
@@ -1469,6 +1525,29 @@ function LoginScreen({ employees, onPick, pickId, pinInput, setPinInput, onConfi
 
 // ---------------- Inicio ----------------
 
+function AvisosSistema({ avisos, onVistos }) {
+  const nuevos = (avisos || []).filter((a) => !a.visto);
+  if (nuevos.length === 0) return null;
+  return (
+    <div style={{ background: "#FDECEC", border: "1.5px solid #E8A09B", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#B3261E", display: "flex", alignItems: "center", gap: 6 }}>
+          <CircleAlert size={16} /> {nuevos.length} aviso{nuevos.length !== 1 ? "s" : ""} del sistema
+        </div>
+        <button onClick={onVistos} style={btn("secundario", "sm")}>Marcar como visto</button>
+      </div>
+      <div style={{ maxHeight: 220, overflowY: "auto" }}>
+        {nuevos.slice(0, 30).map((a) => (
+          <div key={a.id} style={{ fontSize: 12.5, color: "#7A1F1A", padding: "5px 0", borderTop: "1px solid #F4CFCB" }}>
+            <b>{a.tipo === "ventaBajoCosto" ? "Venta con pérdida" : "Precio raro"}</b> · {a.texto}
+            <span style={{ color: "#B07873" }}> · {new Date(a.fecha).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}{a.quien ? ` · ${a.quien}` : ""}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function saludoSegunHora() {
   const h = new Date().getHours();
   if (h < 12) return "Buen día";
@@ -1476,7 +1555,7 @@ function saludoSegunHora() {
   return "Buenas noches";
 }
 
-function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendingCount, pedidosWebCount, setTab, onCargarProducto, products, categories, onEditProduct }) {
+function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendingCount, pedidosWebCount, setTab, onCargarProducto, products, categories, onEditProduct, avisos, onAvisosVistos }) {
   const fecha = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
   const fechaCap = fecha.charAt(0).toUpperCase() + fecha.slice(1);
 
@@ -1489,6 +1568,7 @@ function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendin
 
   return (
     <div>
+      <AvisosSistema avisos={avisos} onVistos={onAvisosVistos} />
       {pedidosWebCount > 0 && (
         <button onClick={() => setTab("historial")} style={{
           width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 10, background: "#FDECEC",
@@ -1560,7 +1640,7 @@ function InicioView({ employeeName, cajaActual, soldToday, productsCount, pendin
 function VenderTab({
   products, categories, search, setSearch, catFilter, setCatFilter, cart, cartTotals,
   onProductTap, changeQty, removeLine, payMethod, setPayMethod, methodLabel, methodIcon,
-  discount, setDiscount, showDiscount, setShowDiscount, cobrar, onScan, scanMsg,
+  discount, setDiscount, showDiscount, setShowDiscount, cobrar, onScan, scanMsg, allProducts,
 }) {
   const qtyInCart = (productId) =>
     cart.filter((l) => l.productId === productId && (!l.modifiers || l.modifiers.length === 0))
@@ -1668,6 +1748,9 @@ function VenderTab({
                       <div style={{ fontSize: 11, color: "#8AA2BC" }}>{l.modifiers.map((m) => m.name).join(", ")}</div>
                     )}
                     <div style={{ fontSize: 12, color: "#8AA2BC" }}>${fmt(l.price + extras)} c/u</div>
+                    {(() => { const pr = (allProducts || products).find((p) => p.id === l.productId); return pr && pr.cost > 0 && l.price < pr.cost ? (
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: "#B3261E" }}>⚠️ Bajo el costo (costo ${fmt(pr.cost)})</div>
+                    ) : null; })()}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <IconBtn onClick={() => changeQty(l.lineId, -1)}><Minus size={13} /></IconBtn>
@@ -2178,6 +2261,209 @@ function GroupFormModal({ form, setForm, onSave, onClose }) {
   );
 }
 
+// ---------------- Precios (ver márgenes y subir precios en masa) ----------------
+function PreciosTab({ products, categories, onAplicar }) {
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("");
+  const [filtro, setFiltro] = useState("todos");
+  const [sel, setSel] = useState({});
+  const [manual, setManual] = useState({}); // id -> precio escrito a mano
+  const [modo, setModo] = useState("pct"); // pct | margen | monto
+  const [valor, setValor] = useState("");
+  const [redondeo, setRedondeo] = useState("10");
+  const [soloSubir, setSoloSubir] = useState(true);
+  const [msg, setMsg] = useState("");
+
+  const margenDe = (cost, price) => (cost > 0 && price > 0 ? ((price - cost) / cost) * 100 : null);
+  const redondear = (n) => {
+    const r = Number(redondeo);
+    return r > 0 ? Math.ceil(n / r) * r : Math.round(n * 100) / 100;
+  };
+  const nuevoMasivo = (p) => {
+    const v = parseFloat(valor);
+    if (isNaN(v)) return null;
+    let n = null;
+    if (modo === "pct") n = p.price * (1 + v / 100);
+    else if (modo === "monto") n = p.price + v;
+    else if (modo === "margen") n = p.cost > 0 ? p.cost * (1 + v / 100) : null;
+    if (n === null || n <= 0) return null;
+    n = redondear(n);
+    if (soloSubir && n <= p.price) return null;
+    return n;
+  };
+  const catName = (id) => categories.find((c) => c.id === id)?.name || "";
+
+  const lista = useMemo(() => {
+    let l = products.filter((p) => {
+      if (cat && p.categoryId !== cat) return false;
+      const m = margenDe(p.cost, p.price);
+      if (filtro === "bajoCosto") return p.cost > 0 && p.price < p.cost;
+      if (filtro === "margenBajo") return m !== null && m < MARGEN_MINIMO;
+      if (filtro === "sinCosto") return !(p.cost > 0);
+      if (filtro === "costoSubio") return p.ultimoCosto > 0 && p.cost > 0 && p.ultimoCosto > p.cost && margenDe(p.ultimoCosto, p.price) < MARGEN_MINIMO;
+      return true;
+    });
+    l = buscar(l, q, (p) => p.name + " " + catName(p.categoryId));
+    if (!q) l = [...l].sort((a, b) => (margenDe(a.cost, a.price) ?? 9999) - (margenDe(b.cost, b.price) ?? 9999));
+    return l;
+  }, [products, q, cat, filtro, categories]);
+
+  const seleccionados = lista.filter((p) => sel[p.id]);
+  const todosSel = lista.length > 0 && lista.every((p) => sel[p.id]);
+  const toggleTodos = () => {
+    const n = { ...sel };
+    lista.forEach((p) => { n[p.id] = !todosSel; });
+    setSel(n);
+  };
+
+  // Cambios pendientes: lo escrito a mano manda; si no, el cálculo masivo para los tildados.
+  const cambios = [];
+  lista.forEach((p) => {
+    const mv = manual[p.id];
+    if (mv !== undefined && mv !== "") {
+      const n = parseFloat(mv);
+      if (!isNaN(n) && n >= 0 && n !== p.price) cambios.push({ id: p.id, p, price: n });
+    } else if (sel[p.id]) {
+      const n = nuevoMasivo(p);
+      if (n !== null && n !== p.price) cambios.push({ id: p.id, p, price: n });
+    }
+  });
+  const cambioDe = (id) => cambios.find((c) => c.id === id);
+
+  const aplicar = async () => {
+    if (cambios.length === 0) return;
+    const bajo = cambios.filter((c) => c.p.cost > 0 && c.price < c.p.cost);
+    let t = `Vas a cambiar el precio de ${cambios.length} producto${cambios.length !== 1 ? "s" : ""}.`;
+    if (bajo.length) t += `\n\n⚠️ ${bajo.length} quedarían POR DEBAJO DEL COSTO:\n` + bajo.slice(0, 8).map((c) => `• ${c.p.name}: $${fmt(c.price)} (costo $${fmt(c.p.cost)})`).join("\n");
+    if (!window.confirm(t + "\n\n¿Aplicar?")) return;
+    await onAplicar(cambios.map((c) => ({ id: c.id, price: c.price, anterior: c.p.price, name: c.p.name })));
+    setSel({}); setManual({}); setValor("");
+    setMsg(`Listo: se actualizaron ${cambios.length} precios.`);
+    setTimeout(() => setMsg(""), 5000);
+  };
+
+  const descargarEtiquetas = () => {
+    const base = seleccionados.length > 0 ? seleccionados : lista;
+    const items = base
+      .filter((p) => precioVenta(p) > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+      .map((p) => ({ nombre: p.name, precio: precioVenta(p) }));
+    if (items.length === 0) return;
+    descargarEtiquetasPDF(items);
+  };
+
+  const filtros = [
+    ["todos", "Todos"], ["bajoCosto", "Bajo el costo"], ["margenBajo", `Margen < ${MARGEN_MINIMO}%`],
+    ["costoSubio", "Costo subió (repuesto más caro)"], ["sinCosto", "Sin costo"],
+  ];
+
+  return (
+    <div>
+      <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 4 }}>Precios y márgenes</div>
+      <div style={{ fontSize: 13, color: "#5B7791", marginBottom: 14 }}>
+        Margen = ganancia sobre el costo. Tildá productos, elegí cuánto subir y mirá cómo quedan antes de aplicar. También podés escribir un precio nuevo a mano en cualquier fila.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar producto..." style={{ ...inputStyle, flex: "1 1 200px" }} />
+        <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ ...inputStyle, flex: "0 1 200px" }}>
+          <option value="">Todas las categorías</option>
+          {categories.slice().sort((a, b) => a.name.localeCompare(b.name, "es")).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {filtros.map(([id, lab]) => (
+          <button key={id} onClick={() => setFiltro(id)} style={{
+            padding: "6px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+            border: filtro === id ? "1.5px solid #1B4F9C" : "1px solid #DBE6F2", background: filtro === id ? "#E8F0FB" : "#fff", color: filtro === id ? "#1B4F9C" : "#5B7791",
+          }}>{lab}</button>
+        ))}
+      </div>
+
+      <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Subir precios a los tildados ({seleccionados.length})</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={modo} onChange={(e) => setModo(e.target.value)} style={{ ...inputStyle, flex: "0 1 240px" }}>
+            <option value="pct">Subir un % al precio actual</option>
+            <option value="margen">Llevar al margen de (% sobre costo)</option>
+            <option value="monto">Sumar un monto fijo ($)</option>
+          </select>
+          <input type="number" value={valor} onChange={(e) => setValor(e.target.value)} placeholder={modo === "monto" ? "$" : "%"} style={{ ...inputStyle, flex: "0 1 100px" }} />
+          <select value={redondeo} onChange={(e) => setRedondeo(e.target.value)} style={{ ...inputStyle, flex: "0 1 190px" }}>
+            <option value="0">Sin redondeo</option>
+            <option value="10">Redondear a $10</option>
+            <option value="50">Redondear a $50</option>
+            <option value="100">Redondear a $100</option>
+          </select>
+          <label style={{ fontSize: 12.5, display: "flex", gap: 6, alignItems: "center" }}>
+            <input type="checkbox" checked={soloSubir} onChange={(e) => setSoloSubir(e.target.checked)} /> Solo subir (nunca bajar)
+          </label>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+          <button onClick={aplicar} disabled={cambios.length === 0} style={{ ...btn("primario", "md"), opacity: cambios.length === 0 ? 0.5 : 1 }}>
+            Aplicar {cambios.length} cambio{cambios.length !== 1 ? "s" : ""}
+          </button>
+          <button onClick={descargarEtiquetas} disabled={lista.length === 0} style={btn("secundario", "md")}>
+            <Download size={15} /> Etiquetas PDF ({seleccionados.length > 0 ? `${seleccionados.length} tildados` : `${lista.length} de la lista`})
+          </button>
+          {Object.keys(manual).length > 0 && <button onClick={() => setManual({})} style={btn("secundario", "sm")}>Borrar precios escritos</button>}
+          {msg && <span style={{ fontSize: 13, color: "#1B7A3E", fontWeight: 700 }}>{msg}</span>}
+        </div>
+      </div>
+
+      <div style={{ background: "#fff", border: "1px solid #E1EAF4", borderRadius: 12, overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 620 }}>
+          <thead>
+            <tr style={{ background: "#F2F6FB", textAlign: "left", color: "#5B7791" }}>
+              <th style={{ padding: 8, width: 30 }}><input type="checkbox" checked={todosSel} onChange={toggleTodos} /></th>
+              <th style={{ padding: 8 }}>Producto</th>
+              <th style={{ padding: 8, textAlign: "right" }}>Costo</th>
+              <th style={{ padding: 8, textAlign: "right" }}>Precio</th>
+              <th style={{ padding: 8, textAlign: "right" }}>Margen</th>
+              <th style={{ padding: 8, textAlign: "right" }}>Precio nuevo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lista.length === 0 && <tr><td colSpan={6} style={{ padding: 16, color: "#8AA2BC" }}>No hay productos con ese filtro.</td></tr>}
+            {lista.map((p) => {
+              const m = margenDe(p.cost, p.price);
+              const ch = cambioDe(p.id);
+              const nm = ch ? margenDe(p.cost, ch.price) : null;
+              const bajo = p.cost > 0 && p.price < p.cost;
+              const nBajo = ch && p.cost > 0 && ch.price < p.cost;
+              return (
+                <tr key={p.id} style={{ borderTop: "1px solid #EDF2F8", background: bajo ? "#FFF4F3" : "transparent" }}>
+                  <td style={{ padding: 8 }}><input type="checkbox" checked={!!sel[p.id]} onChange={() => setSel({ ...sel, [p.id]: !sel[p.id] })} /></td>
+                  <td style={{ padding: 8 }}>
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ fontSize: 11, color: "#8AA2BC" }}>
+                      {catName(p.categoryId)}{p.ultimoCosto > 0 && p.cost > 0 && p.ultimoCosto !== p.cost ? ` · última compra $${fmt(p.ultimoCosto)}` : ""}
+                    </div>
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right" }}>{p.cost > 0 ? `$${fmt(p.cost)}` : "—"}</td>
+                  <td style={{ padding: 8, textAlign: "right", fontWeight: 700 }}>${fmt(p.price)}</td>
+                  <td style={{ padding: 8, textAlign: "right", fontWeight: 700, color: bajo ? "#B3261E" : m !== null && m < MARGEN_MINIMO ? "#A85C06" : "#1B7A3E" }}>
+                    {m === null ? "—" : `${m.toFixed(0)}%`}{bajo ? " ⚠️" : ""}
+                  </td>
+                  <td style={{ padding: 8, textAlign: "right", whiteSpace: "nowrap" }}>
+                    <input
+                      type="number" min="0" value={manual[p.id] ?? ""}
+                      onChange={(e) => setManual({ ...manual, [p.id]: e.target.value })}
+                      placeholder={ch && manual[p.id] === undefined ? String(ch.price) : "escribir"}
+                      style={{ ...inputStyle, width: 96, padding: "6px 8px", textAlign: "right", borderColor: ch ? (nBajo ? "#E8A09B" : "#9CC3F0") : undefined }}
+                    />
+                    {ch && <div style={{ fontSize: 11, fontWeight: 700, color: nBajo ? "#B3261E" : "#1B4F9C" }}>{nm === null ? "" : `margen ${nm.toFixed(0)}%`}{nBajo ? " ⚠️ bajo costo" : ""}</div>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ---------------- Alertas de productos (botones que despliegan la lista) ----------------
 const MARGEN_MINIMO = 30; // % sobre el costo (misma cuenta que el "Margen" que se ve en cada producto)
 
@@ -2185,6 +2471,11 @@ function calcularAlertas(products) {
   const margen = (p) => (p.cost > 0 && p.price > 0 ? ((p.price - p.cost) / p.cost) * 100 : null);
   const porNombre = (a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" });
   return [
+    {
+      id: "bajoCosto", label: "Vendiendo bajo el costo", critica: true,
+      items: products.filter((p) => p.cost > 0 && precioVenta(p) > 0 && precioVenta(p) < p.cost).sort((a, b) => (precioVenta(a) - a.cost) - (precioVenta(b) - b.cost)),
+      detalle: (p) => `Precio $${fmt(precioVenta(p))} < costo $${fmt(p.cost)} · perdés $${fmt(p.cost - precioVenta(p))} por unidad`,
+    },
     {
       id: "sinStock", label: "Sin stock",
       items: products.filter((p) => (p.stock || 0) <= 0).sort(porNombre),
@@ -2207,7 +2498,7 @@ function calcularAlertas(products) {
     },
     {
       id: "margenBajo", label: `Margen menor a ${MARGEN_MINIMO}%`,
-      items: products.filter((p) => { const m = margen(p); return m !== null && m < MARGEN_MINIMO; }).sort((a, b) => margen(a) - margen(b)),
+      items: products.filter((p) => { const m = margen(p); return m !== null && m >= 0 && m < MARGEN_MINIMO; }).sort((a, b) => margen(a) - margen(b)),
       detalle: (p) => `Margen ${margen(p).toFixed(0)}% · costo $${fmt(p.cost)} · precio $${fmt(p.price)}`,
     },
   ];
@@ -2236,9 +2527,9 @@ function AlertasProductos({ products, categories, onEdit, titulo }) {
               onClick={() => { setAbierta(sel ? null : a.id); setBusq(""); }}
               style={{
                 display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, fontSize: 12.5, fontWeight: 700,
-                border: sel ? "1.5px solid #A85C06" : hay ? "1px solid #FBE3B8" : "1px solid #E1EAF4",
-                background: sel ? "#FDF0DC" : hay ? "#FFFBF2" : "#F6F9FE",
-                color: hay ? "#A85C06" : "#8AA2BC", opacity: hay ? 1 : 0.7, cursor: hay ? "pointer" : "default",
+                border: sel ? "1.5px solid #A85C06" : hay ? (a.critica ? "1.5px solid #E8A09B" : "1px solid #FBE3B8") : "1px solid #E1EAF4",
+                background: sel ? "#FDF0DC" : hay ? (a.critica ? "#FDECEC" : "#FFFBF2") : "#F6F9FE",
+                color: hay ? (a.critica ? "#B3261E" : "#A85C06") : "#8AA2BC", opacity: hay ? 1 : 0.7, cursor: hay ? "pointer" : "default",
               }}
             >
               {hay && <CircleAlert size={14} />}
@@ -4205,6 +4496,8 @@ function ProductFormModal({ form, setForm, categories, onSave, onClose, onCreate
     const finalForm = conDescuento
       ? { ...form, modifiers: cleanMods, cost: costoConDescuento !== null ? String(costoConDescuento) : form.cost }
       : { ...form, modifiers: cleanMods, costoLista: "", descuentoPct: "" };
+    const pr = parseFloat(finalForm.price), co = parseFloat(finalForm.cost);
+    if (pr > 0 && co > 0 && pr < co && !window.confirm(`⚠️ El precio ($${pr}) es MENOR al costo ($${co}). Si lo guardás así, cada venta pierde plata.\n\n¿Guardar igual? (Cancelar para corregirlo)`)) return;
     onSave(finalForm, keepOpen);
   };
 
@@ -4596,6 +4889,13 @@ function StockAdjustModal({ product, onConfirm, onClose }) {
 
 function PriceEditModal({ product, onConfirm, onClose }) {
   const [price, setPrice] = useState(String(product.price || ""));
+  const [aviso, setAviso] = useState(null);
+  const guardar = () => {
+    const v = parseFloat(price);
+    const av = avisoPrecio(product, v);
+    if (av && av !== aviso) { setAviso(av); return; }
+    onConfirm(v);
+  };
   return (
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -4605,12 +4905,13 @@ function PriceEditModal({ product, onConfirm, onClose }) {
       <Field label="Precio de venta">
         <input
           autoFocus type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && onConfirm(parseFloat(price))}
+          onKeyDown={(e) => e.key === "Enter" && guardar()}
           placeholder="0.00" style={inputStyle}
         />
       </Field>
+      {aviso && <div style={{ background: "#FDF0DC", color: "#A85C06", borderRadius: 8, padding: "8px 10px", fontSize: 12.5, fontWeight: 600 }}>⚠️ Ojo: {aviso}. Tocá de nuevo para guardar igual.</div>}
       <button
-        onClick={() => onConfirm(parseFloat(price))}
+        onClick={guardar}
         style={{ ...btn("primario", "lg"), width: "100%", marginTop: 8 }}
       >
         Guardar precio
